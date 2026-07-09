@@ -72,94 +72,57 @@ def reduceContour(edge, rect, shrink=1, threshold=0.3):
 
     return best_rect
 
+def LoadArray():
+    arr = np.loadtxt("CameraArray.txt")
+    return arr
+
+def ConvertArrayToImage(arr):
+    # Normalize to 0-255
+    arr_norm = cv2.normalize(arr, None, 0, 255, cv2.NORM_MINMAX)
+    arr_norm = arr_norm.astype(np.uint8)
+
+    # Apply color map
+    colored = cv2.applyColorMap(arr_norm, cv2.COLORMAP_JET)
+
+    return colored
 
 
-# Load array
-arr = np.loadtxt("CameraArray.txt")
 
-# Normalize to 0-255
-arr_norm = cv2.normalize(arr, None, 0, 255, cv2.NORM_MINMAX)
-arr_norm = arr_norm.astype(np.uint8)
-
-# Apply color map
-colored = cv2.applyColorMap(arr_norm, cv2.COLORMAP_JET)
-
-edge = cv2.Canny(colored,200,300)
-
-coords = np.column_stack(np.where(edge > 0))
-if len(coords) != 0:
-	points = coords[:, ::-1].astype(np.float32)
-	rect = cv2.minAreaRect(points)
-	box = cv2.boxPoints(rect)
-	box = np.int32(box)
-#cv2.imshow("edge",edge)
-#cv2.imshow("pre output", colored_1)
+def Array_processing():
+        
+    arr = LoadArray()
+    colored = ConvertArrayToImage(arr)
 
 
-rect = cv2.minAreaRect(points)
+    edge = cv2.Canny(colored,200,300)
 
-best_rect = reduceContour(edge, rect)
-
-box = cv2.boxPoints(best_rect)
-box = np.int32(box)
-
-output = cv2.cvtColor(edge, cv2.COLOR_GRAY2BGR)
-#cv2.drawContours(output, [box], 0, (0,0,255), 1)
-#cv2.drawContours(colored, [box], 0, (0,0,255), 1)
-'''
-print("bounding box :")
-print(box[0][0])
-print(box[1][0])
-print(box[0][1])
-print(box[2][1])
-'''
-
-cropped = output[box[0][1]:box[2][1],box[0][0]+1:box[1][0]+1]
-cropped = resizeWidth(cropped,760,False)
-cv2.imshow("cropped",cropped)
-
-colored_final = colored[box[0][1]:box[2][1],box[0][0]+1:box[1][0]+1]
-colored_final = resizeWidth(colored_final,760,True)
-cv2.imshow("colored finalll",colored_final)
-
-cv2.imwrite("thermalHeatMap.jpg",colored_final)
-
-colored = resizeWidth(colored, 760 , True)
-output = resizeWidth(output , 760 , True)
+    coords = np.column_stack(np.where(edge > 0))
+    if len(coords) != 0:
+        points = coords[:, ::-1].astype(np.float32)
+        rect = cv2.minAreaRect(points)
+        box = cv2.boxPoints(rect)
+        box = np.int32(box)
 
 
-#cv2.imshow("output",output)
-#cv2.imshow("final",colored)
+    rect = cv2.minAreaRect(points)
 
-'''
-cv2.imshow("edge",edge)
-contour_frame = output.copy()
-kernel = np.ones((11,11), np.uint8)
-edge = cv2.morphologyEx(edge, cv2.MORPH_CLOSE, kernel)
-edge = cv2.morphologyEx(edge, cv2.MORPH_OPEN, kernel)
-cv2.imshow("edgemorph",edge)
-edge_blur = cv2.GaussianBlur(edge, (13,13),0)
-contours, _ = cv2.findContours(edge_blur, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    best_rect = reduceContour(edge, rect)
 
-largest = None
-largest_area = 0
+    box = cv2.boxPoints(best_rect)
+    box = np.int32(box)
 
-for cnt in contours:
-	epsilon = 0.02 * cv2.arcLength(cnt, True)
-	approx = cv2.approxPolyDP(cnt, epsilon, True)
+    output = cv2.cvtColor(edge, cv2.COLOR_GRAY2BGR)
 
-	if len(approx) == 4:
-		area = cv2.contourArea(approx)
-		if area > largest_area:
-			largest_area = area
-			largest = approx:
-		cv2.drawContours(contour_frame,[approx], -1, (0, 0, 255), 3)
-		print("found one")
-if (largest is not None):
-	cv2.drawContours(contour_frame, [largest], -1, (0, 0, 255), 6)
+    cropped = output[box[0][1]:box[2][1],box[0][0]+1:box[1][0]+1]
+    cropped = resizeWidth(cropped,760,False)
+    # cv2.imshow("cropped",cropped)
 
-cv2.imshow("contour_frame",contour_frame)
-'''
+    colored_final = colored[box[0][1]:box[2][1],box[0][0]+1:box[1][0]+1]
+    colored_final = resizeWidth(colored_final,760,True)
+    # cv2.imshow("colored finalll",colored_final)
 
-cv2.waitKey(0)
-cv2.destroyAllWindows()
+    # cv2.imwrite("thermalHeatMap.jpg",colored_final)
+
+    # colored = resizeWidth(colored, 760 , True)
+    output = resizeWidth(output , 760 , True)
+    return colored_final , output
