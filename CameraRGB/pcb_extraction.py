@@ -182,7 +182,7 @@ while True:
     cv2.imshow("color contrast rect", output)
 #    cv2.imshow("contour_frame",contour_frame)
     cv2.imshow("flattened output pcb", warped)
-
+    cv2.imwrite("flattenedPCB.jpg",warped)
 
 #event interception (keyboard)
 

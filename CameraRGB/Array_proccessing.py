@@ -8,11 +8,7 @@ def resizeWidth(frame,size,interpole):
 	if(interpole):
 		return cv2.resize(frame,(size,new_h),interpolation=cv2.INTER_LANCZOS4)
 	else:
-		return cv2.resize(frame,(size,new_h))
-
-import cv2
-import numpy as np
-
+		return cv2.resize(frame,(size,new_h),interpolation=cv2.INTER_NEAREST)
 
 def rectangle_coverage(edge, box):
     """
@@ -89,18 +85,13 @@ arr_norm = arr_norm.astype(np.uint8)
 colored = cv2.applyColorMap(arr_norm, cv2.COLORMAP_JET)
 
 edge = cv2.Canny(colored,200,300)
+
 coords = np.column_stack(np.where(edge > 0))
-edge_1 = edge.copy()
-colored_1 = colored.copy()
 if len(coords) != 0:
 	points = coords[:, ::-1].astype(np.float32)
 	rect = cv2.minAreaRect(points)
 	box = cv2.boxPoints(rect)
 	box = np.int32(box)
-	cv2.drawContours(edge_1, [box], 0, (0, 0, 255), 1)
-	cv2.drawContours(colored_1, [box], 0, (0, 0, 255), 1)
-colored_1 = resizeWidth(colored_1,760,True)
-edge_1 = resizeWidth(edge_1,760,True)
 #cv2.imshow("edge",edge)
 #cv2.imshow("pre output", colored_1)
 
@@ -115,22 +106,27 @@ box = np.int32(box)
 output = cv2.cvtColor(edge, cv2.COLOR_GRAY2BGR)
 #cv2.drawContours(output, [box], 0, (0,0,255), 1)
 #cv2.drawContours(colored, [box], 0, (0,0,255), 1)
-
+'''
 print("bounding box :")
 print(box[0][0])
 print(box[1][0])
 print(box[0][1])
 print(box[2][1])
+'''
+
 cropped = output[box[0][1]:box[2][1],box[0][0]+1:box[1][0]+1]
-cropped = resizeWidth(cropped,760,True)
+cropped = resizeWidth(cropped,760,False)
 cv2.imshow("cropped",cropped)
 
 colored_final = colored[box[0][1]:box[2][1],box[0][0]+1:box[1][0]+1]
-colored_final = resizeWidth(colored_final,760,False)
+colored_final = resizeWidth(colored_final,760,True)
 cv2.imshow("colored finalll",colored_final)
+
+cv2.imwrite("thermalHeatMap.jpg",colored_final)
 
 colored = resizeWidth(colored, 760 , True)
 output = resizeWidth(output , 760 , True)
+
 
 #cv2.imshow("output",output)
 #cv2.imshow("final",colored)
