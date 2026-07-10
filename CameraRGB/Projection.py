@@ -12,6 +12,7 @@ def getFromFile():
 
 def Projection(RGB, Thermal):
     # RGB, Thermal = getFromFile()
+    RGB = cv2.resize(RGB, (Thermal.shape[1], Thermal.shape[0]))
     blended = cv2.addWeighted(RGB, alpha, Thermal, beta, 0)
     return blended
 

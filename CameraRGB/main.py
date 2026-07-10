@@ -9,4 +9,4 @@ while True:
     warped = pcb_extraction()
     colored_final, output = Array_processing()
     blended = Projection(warped, colored_final)
-    cv2.imshow("Blended", blended)  
+    cv2.imshow("Blended", blended)
