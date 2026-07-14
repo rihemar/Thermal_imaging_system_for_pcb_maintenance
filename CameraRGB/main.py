@@ -12,6 +12,9 @@ while True:
         continue
     cv2.imshow("Warped PCB", warped)
     colored_final, output = Array_processing()
+    if colored_final is None or output is None:
+        print("Failed to process array. Please check the input data.")
+        continue
     cv2.imshow("Colored Final", colored_final)
     cv2.imshow("Edge Output", output)
     blended = Projection(warped, colored_final)

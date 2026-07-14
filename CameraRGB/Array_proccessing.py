@@ -57,7 +57,6 @@ def reduceContour(edge, rect, shrink=1, threshold=0.3):
 
         coverage = rectangle_coverage(edge, box)
 
-        print(f"Coverage = {coverage:.2f}")
 
         if coverage < threshold:
             #print("broke")
@@ -91,6 +90,9 @@ def ConvertArrayToImage(arr):
 def Array_processing():
         
     arr = LoadArray()
+    if arr is None:
+        print("Failed to load array from CameraArray.txt. Please check the file.")
+        return None, None
     colored = ConvertArrayToImage(arr)
 
 
