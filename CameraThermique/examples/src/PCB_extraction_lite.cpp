@@ -104,7 +104,7 @@ int main()
           std::ofstream file("../CameraRGB/CameraArray.txt");
 
             if (!file.is_open()) {
-                 std::cout << "Failed to open file.\n";
+                 std::cout << "Failed to open file 1.\n";
             return 1;
             }
 
@@ -124,7 +124,7 @@ int main()
            std::ofstream fileUp("../CameraRGB/CameraArrayScaled.txt");
 
             if (!fileUp.is_open()) {
-                 std::cout << "Failed to open file.\n";
+                 std::cout << "Failed to open file 2.\n";
             return 1;
             }
 
