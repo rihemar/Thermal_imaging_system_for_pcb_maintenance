@@ -105,7 +105,14 @@ def pcb_extraction():
     warped = cv2.resize(warped,resize_frame(warped,760))
     return warped
 
-
+def test_pcb_extraction():
+    warped = pcb_extraction()
+    if warped is None:
+        print("No PCB detected. Please adjust the camera or the PCB position.")
+        return
+    cv2.imshow("Warped PCB", warped)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
 
 
