@@ -129,3 +129,14 @@ def Array_processing():
     # colored = resizeWidth(colored, 760 , True)
     output = resizeWidth(output , 760 , True)
     return colored_final , output
+
+
+def test_Array_processing():
+    colored_final, output = Array_processing()
+    if colored_final is not None and output is not None:
+        cv2.imshow("Colored Final", colored_final)
+        cv2.imshow("Edge Output", output)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+    else:
+        print("Array processing failed. Please check the input data.")

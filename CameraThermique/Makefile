@@ -75,7 +75,7 @@ $(BUILD_DIR)claude: $(SRC_DIR)claude.o libMLX90640_API.a
 $(BUILD_DIR)GUI: $(SRC_DIR)GUI.o libMLX90640_API.a 
 	$(CXX) -L/home/pi/mlx90640-library $^ -o $@ $(I2C_LIBS) $(LDLIBS)
 
-$(BUILD_DIR)GUI: $(SRC_DIR)PCB_extraction_lite.o libMLX90640_API.a 
+$(BUILD_DIR)PCB_extraction_lite: $(SRC_DIR)PCB_extraction_lite.o libMLX90640_API.a 
 	$(CXX) -L/home/pi/mlx90640-library $^ -o $@ $(I2C_LIBS) $(LDLIBS)
 
 $(BUILD_DIR)oled: $(SRC_DIR)oled.o libMLX90640_API.a /usr/local/lib/libSSD1306_OLED_RPI.a
