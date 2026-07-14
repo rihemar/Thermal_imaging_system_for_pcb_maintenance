@@ -15,4 +15,5 @@ while True:
     cv2.imshow("Colored Final", colored_final)
     cv2.imshow("Edge Output", output)
     blended = Projection(warped, colored_final)
+    print("Blended image created successfully.")
     cv2.imshow("Blended", blended)

@@ -114,6 +114,9 @@ def Array_processing():
     output = cv2.cvtColor(edge, cv2.COLOR_GRAY2BGR)
 
     cropped = output[box[0][1]:box[2][1],box[0][0]+1:box[1][0]+1]
+    if cropped.size == 0:
+        print("Cropped image is empty. Please check the PCB detection.")
+        return None, None
     cropped = resizeWidth(cropped,760,False)
     # cv2.imshow("cropped",cropped)
 
