@@ -73,19 +73,15 @@ int main()
     MLX90640_ExtractParameters(eeMLX90640, &mlx90640);
 
 
-    int winW = DST_W * WIN_SCALE;
-    int winH = DST_H * WIN_SCALE + 30;
-
     // ── working buffers ───────────────────────────────────────────────────────
     static float oriented[SRC_H][SRC_W];
     static float upscaled[DST_H][DST_W];
     // ── state ─────────────────────────────────────────────────────────────────
     bool running  = true;
-    bool paused   = false;
     int  subpage  = 0;
     int  frameN   = 0;
     float minT = 20.f, maxT = 50.f, avgT = 35.f;
-    int  mouseX = -1, mouseY = -1;
+    
 
     auto tLast = std::chrono::steady_clock::now();
     float fps = 0.f;
@@ -125,22 +121,22 @@ int main()
  
             slidingWindowUpscale(oriented, upscaled);
 
-           std::ofstream file("../CameraRGB/CameraArrayScaled.txt");
+           std::ofstream fileUp("../CameraRGB/CameraArrayScaled.txt");
 
-            if (!file.is_open()) {
+            if (!fileUp.is_open()) {
                  std::cout << "Failed to open file.\n";
             return 1;
             }
 
             for (int i = 0; i < DST_H; i++) {
                 for (int j = 0; j < DST_W; j++) {
-                        file << upscaled[i][j];
+                        fileUp << upscaled[i][j];
                         if (j < DST_W - 1)
-                        file << ' ';
+                        fileUp << ' ';
                 }
-                file << '\n';
+                fileUp << '\n';
             }
-            file.close();
+            fileUp.close();
 
  
 
@@ -155,18 +151,6 @@ int main()
             }
             avgT = (float)(sum / (DST_H * DST_W));
 
-            // map to RGB via LUT
-            float range = maxT - minT;
-            if (range < 0.01f) range = 0.01f;
-            for (int i = 0; i < DST_H * DST_W; i++) {
-                int n = (int)(((upscaled[i / DST_W][i % DST_W] - minT) / range) * 255.f);
-                n = std::max(0, std::min(255, n));
-                pixels[i*3  ] = lut[n].r;
-                pixels[i*3+1] = lut[n].g;
-                pixels[i*3+2] = lut[n].b;
-            }
-            SDL_UpdateTexture(tex, nullptr, pixels, DST_W * 3);
-            stbi_write_jpg("../CameraRGB/thermalCameraFrame.jpg", DST_W, DST_H, 3, pixels, 95);
             frameN++;
 
             // FPS
