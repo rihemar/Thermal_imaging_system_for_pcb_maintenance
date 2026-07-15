@@ -78,6 +78,13 @@ def pcb_extraction():
     edge = cv2.Canny(blur,250,350) 
     
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    sat = hsv[:,:,1]
+    value = hsv[:,:,2]
+    mask = value > 30
+    current_sat = np.mean(sat[mask])
+    if current_sat !=0:
+        factor = target
+
     lower = (40, 50, 50)
     upper = (90, 255, 255)
     mask = cv2.inRange(hsv, lower, upper)
@@ -127,13 +134,14 @@ def test_contour_detection():
         ret, frame = cap.read()
         if not ret:
             return
-        
+#        print("camera on")
         gray = cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY)
         blur = cv2.GaussianBlur(gray , (9,9) , 0)
         edge = cv2.Canny(blur,250,350) 
         
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        lower = (40, 50, 50)
+        	
+	lower = (40, 50, 50)
         upper = (90, 255, 255)
         mask = cv2.inRange(hsv, lower, upper)
 
@@ -148,7 +156,7 @@ def test_contour_detection():
         # building the smallest rectangle containing the pcb
         coords = np.column_stack(np.where(mask > 0))
         if len(coords) == 0:
-            return
+            continue
         points = coords[:, ::-1].astype(np.float32)
         rect = cv2.minAreaRect(points)
         box = cv2.boxPoints(rect)
@@ -162,9 +170,6 @@ def test_contour_detection():
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q'):
             break
-
-if __name__ == "__main__":
-	test_pcb_extraction()
 
 def test_both():
     while (True):
