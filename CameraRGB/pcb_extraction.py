@@ -1,3 +1,5 @@
+import sys
+
 import numpy as np
 import cv2
 
@@ -106,19 +108,118 @@ def pcb_extraction():
     return warped
 
 def test_pcb_extraction():
-    warped = pcb_extraction()
-    if warped is None:
-        print("No PCB detected. Please adjust the camera or the PCB position.")
-        return
-    cv2.imshow("Warped PCB", warped)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+    while(True):
+        warped = pcb_extraction()
+        if warped is None:
+            print("No PCB detected. Please adjust the camera or the PCB position.")
+            continue
+        cv2.imshow("Warped PCB", warped)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            break
+   
+
+def test_contour_detection():
+    while (True):
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        ret, frame = cap.read()
+        if not ret:
+            return
+        
+        gray = cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY)
+        blur = cv2.GaussianBlur(gray , (9,9) , 0)
+        edge = cv2.Canny(blur,250,350) 
+        
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        lower = (40, 50, 50)
+        upper = (90, 255, 255)
+        mask = cv2.inRange(hsv, lower, upper)
+
+        kernel = np.ones((11,11), np.uint8)
+
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        color_contrast_frame = frame.copy()
+        output = frame.copy()
+        output[mask > 0] = (0, 0, 255)
+
+        # building the smallest rectangle containing the pcb
+        coords = np.column_stack(np.where(mask > 0))
+        if len(coords) == 0:
+            return
+        points = coords[:, ::-1].astype(np.float32)
+        rect = cv2.minAreaRect(points)
+        box = cv2.boxPoints(rect)
+        box = np.int32(box)
+        cv2.drawContours(output, [box], 0, (0, 0, 255), 2)
+        rect = order_points(box)
+        for i in range(4):
+            output = cv2.circle(output, [int(rect[i][0]),int(rect[i][1])], 1, (255,0,0),3)
+            output = cv2.putText(output, str(i), (int(rect[i][0]) + 5, int(rect[i][1]) + 5), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+        cv2.imshow("Contour Detection", output)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            break
 
 
 
+def test_both():
+    while (True):
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            ret, frame = cap.read()
+            if not ret:
+                return
+            
+            gray = cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY)
+            blur = cv2.GaussianBlur(gray , (9,9) , 0)
+            edge = cv2.Canny(blur,250,350) 
+            
+            hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+            lower = (40, 50, 50)
+            upper = (90, 255, 255)
+            mask = cv2.inRange(hsv, lower, upper)
+
+            kernel = np.ones((11,11), np.uint8)
+
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+            color_contrast_frame = frame.copy()
+            output = frame.copy()
+            output[mask > 0] = (0, 0, 255)
+
+            # building the smallest rectangle containing the pcb
+            coords = np.column_stack(np.where(mask > 0))
+            if len(coords) == 0:
+                return
+            points = coords[:, ::-1].astype(np.float32)
+            rect = cv2.minAreaRect(points)
+            box = cv2.boxPoints(rect)
+            box = np.int32(box)
+            cv2.drawContours(output, [box], 0, (0, 0, 255), 2)
+            rect = order_points(box)
+            for i in range(4):
+                output = cv2.circle(output, [int(rect[i][0]),int(rect[i][1])], 1, (255,0,0),3)
+                output = cv2.putText(output, str(i), (int(rect[i][0]) + 5, int(rect[i][1]) + 5), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+            cv2.imshow("Contour Detection", output)
+            warped = warp_perspective(frame, box)
+
+            warped = cv2.resize(warped,resize_frame(warped,760))
+            cv2.imshow("Warped PCB", warped)
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
+                break
 
 
-
+if __name__ == "__main__":
+    argument = sys.argv[1]
+    if argument == "warped":
+        test_pcb_extraction()
+    elif argument == "contour":
+        test_contour_detection()
+    elif argument == "both":
+        test_both()
+    else:
+        print("Invalid argument. Use 'warped', 'contour', or 'both'.")
 
 
 

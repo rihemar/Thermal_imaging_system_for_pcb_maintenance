@@ -1,5 +1,6 @@
 import numpy as np
 import cv2
+import sys
 
 #resizing function
 def resizeWidth(frame,size,interpole):
@@ -134,11 +135,56 @@ def Array_processing():
 
 
 def test_Array_processing():
-    colored_final, output = Array_processing()
-    if colored_final is not None and output is not None:
+    while(True):
+        colored_final, output = Array_processing()
+        if colored_final is not None and output is not None:
+            cv2.imshow("Colored Final", colored_final)
+            cv2.imshow("Edge Output", output)
+        else:
+            print("Array processing failed. Please check the input data.")
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            break
+
+
+def debug():
+    while(True):
+        arr = LoadArray()
+        if arr is None:
+            print("Failed to load array from CameraArray.txt. Please check the file.")
+            return None, None
+        colored = ConvertArrayToImage(arr)
+
+
+        edge = cv2.Canny(colored,200,300)
+
+        coords = np.column_stack(np.where(edge > 0))
+        if len(coords) != 0:
+            points = coords[:, ::-1].astype(np.float32)
+            rect = cv2.minAreaRect(points)
+            box = cv2.boxPoints(rect)
+            box = np.int32(box)
+
+
+        rect = cv2.minAreaRect(points)
+
+        best_rect = reduceContour(edge, rect)
+
+        box = cv2.boxPoints(best_rect)
+        box = np.int32(box)
+
+        colored_final = colored.copy()
+        cv2.polylines(colored_final, [box], True, (0, 255, 0), 2)
+
         cv2.imshow("Colored Final", colored_final)
-        cv2.imshow("Edge Output", output)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            break
+if __name__ == "__main__":
+    argument = sys.argv[1]
+    if argument == "test":
+        test_Array_processing()
+    elif argument == "debug":
+        debug()
     else:
-        print("Array processing failed. Please check the input data.")
+        print("Invalid argument. Use 'test' or 'debug'.")
