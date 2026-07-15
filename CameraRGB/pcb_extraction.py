@@ -2,7 +2,7 @@ import numpy as np
 import cv2
 
 
-url = "http://192.168.1.144:8080/video"
+url = "http://10.32.111.220:8080/video"
 cap = cv2.VideoCapture(url)
 if not cap.isOpened():
     print("Could not connect to IP Webcam")
@@ -115,7 +115,8 @@ def test_pcb_extraction():
     cv2.destroyAllWindows()
 
 
-
+if __name__ == "__main__":
+	test_pcb_extraction()
 
 
 
