@@ -1,8 +1,8 @@
 import sys
-
+from test import adaptive_saturation
 import numpy as np
 import cv2
-
+target_sat = 2500
 
 
 url = "http://192.168.1.181:81/stream"
@@ -78,26 +78,7 @@ def pcb_extraction():
     edge = cv2.Canny(blur,250,350) 
     
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    sat = hsv[:,:,1]
-    value = hsv[:,:,2]
-    mask = value > 30  # ignore shadows
-    current_sat = np.mean(sat[mask])
-
-    if current_sat != 0:
-        target_sat = 150
-        # Calculate adaptive multiplier
-        factor = target_sat / current_sat
-
-        # Limit amplification
-        factor = np.clip(factor, 0.5, 3.0)
-
-        # Apply
-        hsv[:, :, 1] = np.clip(
-            hsv[:, :, 1].astype(np.float32) * factor,
-            0,
-            255
-        ).astype(np.uint8)
-
+    hsv = adaptive_saturation(hsv,70)
     lower = (40, 50, 50)
     upper = (90, 255, 255)
     mask = cv2.inRange(hsv, lower, upper)
@@ -154,26 +135,8 @@ def test_contour_detection():
         
             
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        sat = hsv[:,:,1]
-        value = hsv[:,:,2]
-        mask = value > 30  # ignore shadows
-        current_sat = np.mean(sat[mask])
+        hsv = adaptive_saturation(hsv,70)
 
-        if current_sat != 0:
-            target_sat = 150
-            # Calculate adaptive multiplier
-            factor = target_sat / current_sat
-
-            # Limit amplification
-            factor = np.clip(factor, 0.5, 3.0)
-
-            # Apply
-            hsv[:, :, 1] = np.clip(
-                hsv[:, :, 1].astype(np.float32) * factor,
-                0,
-                255
-            ).astype(np.uint8)
-    
         lower = (40, 50, 50)
         upper = (90, 255, 255)
         mask = cv2.inRange(hsv, lower, upper)
@@ -183,7 +146,8 @@ def test_contour_detection():
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
         color_contrast_frame = frame.copy()
-        output = frame.copy()
+        hsv = cv2.cvtColor(hsv, cv2.COLOR_BGR2HSV)
+        output = hsv.copy()
         output[mask > 0] = (0, 0, 255)
 
         # building the smallest rectangle containing the pcb
