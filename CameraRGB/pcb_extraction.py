@@ -4,7 +4,9 @@ import numpy as np
 import cv2
 
 
+
 url = "http://192.168.1.181:81/stream"
+
 cap = cv2.VideoCapture(url)
 if not cap.isOpened():
     print("Could not connect to IP Webcam")
@@ -161,7 +163,8 @@ def test_contour_detection():
         if key == ord('q'):
             break
 
-
+if __name__ == "__main__":
+	test_pcb_extraction()
 
 def test_both():
     while (True):
