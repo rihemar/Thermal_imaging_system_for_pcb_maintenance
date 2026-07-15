@@ -187,7 +187,7 @@ def test_both():
             current_sat = np.mean(sat[mask])
 
             if current_sat != 0:
-                target_sat = 150
+                target_sat = 250
                 # Calculate adaptive multiplier
                 factor = target_sat / current_sat
 
@@ -200,7 +200,7 @@ def test_both():
                     0,
                     255
                 ).astype(np.uint8)
-                
+
             lower = (40, 50, 50)
             upper = (90, 255, 255)
             mask = cv2.inRange(hsv, lower, upper)
