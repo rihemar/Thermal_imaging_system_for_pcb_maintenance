@@ -18,7 +18,3 @@ def Projection(RGB, Thermal):
 
 
 
-# cv2.imshow("Blended", blended)
-# cv2.waitKey(0)
-# cv2.destroyAllWindows()
-
