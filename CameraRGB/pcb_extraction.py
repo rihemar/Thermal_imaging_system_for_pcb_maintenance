@@ -80,10 +80,23 @@ def pcb_extraction():
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     sat = hsv[:,:,1]
     value = hsv[:,:,2]
-    mask = value > 30
+    mask = value > 30  # ignore shadows
     current_sat = np.mean(sat[mask])
-    if current_sat !=0:
-        factor = target
+
+    if current_sat != 0:
+        target_sat = 150
+        # Calculate adaptive multiplier
+        factor = target_sat / current_sat
+
+        # Limit amplification
+        factor = np.clip(factor, 0.5, 3.0)
+
+        # Apply
+        hsv[:, :, 1] = np.clip(
+            hsv[:, :, 1].astype(np.float32) * factor,
+            0,
+            255
+        ).astype(np.uint8)
 
     lower = (40, 50, 50)
     upper = (90, 255, 255)
@@ -139,9 +152,29 @@ def test_contour_detection():
         blur = cv2.GaussianBlur(gray , (9,9) , 0)
         edge = cv2.Canny(blur,250,350) 
         
+            
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        	
-	lower = (40, 50, 50)
+        sat = hsv[:,:,1]
+        value = hsv[:,:,2]
+        mask = value > 30  # ignore shadows
+        current_sat = np.mean(sat[mask])
+
+        if current_sat != 0:
+            target_sat = 150
+            # Calculate adaptive multiplier
+            factor = target_sat / current_sat
+
+            # Limit amplification
+            factor = np.clip(factor, 0.5, 3.0)
+
+            # Apply
+            hsv[:, :, 1] = np.clip(
+                hsv[:, :, 1].astype(np.float32) * factor,
+                0,
+                255
+            ).astype(np.uint8)
+    
+        lower = (40, 50, 50)
         upper = (90, 255, 255)
         mask = cv2.inRange(hsv, lower, upper)
 
@@ -182,7 +215,28 @@ def test_both():
             blur = cv2.GaussianBlur(gray , (9,9) , 0)
             edge = cv2.Canny(blur,250,350) 
             
+
             hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+            sat = hsv[:,:,1]
+            value = hsv[:,:,2]
+            mask = value > 30  # ignore shadows
+            current_sat = np.mean(sat[mask])
+
+            if current_sat != 0:
+                target_sat = 150
+                # Calculate adaptive multiplier
+                factor = target_sat / current_sat
+
+                # Limit amplification
+                factor = np.clip(factor, 0.5, 3.0)
+
+                # Apply
+                hsv[:, :, 1] = np.clip(
+                    hsv[:, :, 1].astype(np.float32) * factor,
+                    0,
+                    255
+                ).astype(np.uint8)
+                
             lower = (40, 50, 50)
             upper = (90, 255, 255)
             mask = cv2.inRange(hsv, lower, upper)
