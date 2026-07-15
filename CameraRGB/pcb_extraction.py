@@ -2,7 +2,9 @@ import numpy as np
 import cv2
 
 
-url = "http://10.32.111.220:8080/video"
+
+url = "http://192.168.1.181:81/stream"
+
 cap = cv2.VideoCapture(url)
 if not cap.isOpened():
     print("Could not connect to IP Webcam")
