@@ -163,7 +163,7 @@ def cam():
 
 if __name__ == "__main__":
     argument = sys.argv[1]
-    if argument is not null and argument == "origin":
+    if argument is not None and argument == "origin":
         cam()
     # if argument == "warped":
     # elif argument == "contour":
