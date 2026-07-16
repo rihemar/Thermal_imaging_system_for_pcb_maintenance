@@ -163,11 +163,12 @@ def cam():
 
 if __name__ == "__main__":
     argument = sys.argv[1]
-    if argument is not None and argument == "origin":
+    if argument == "origin":
         cam()
+    else:
     # if argument == "warped":
     # elif argument == "contour":
     # elif argument == "both":
     # else:
     #     print("Invalid argument. Use 'warped', 'contour', or 'both'.")
-    cam_test()
+        cam_test()
