@@ -209,4 +209,4 @@ if __name__ == "__main__":
     elif argument == "both":
         test_both()
     else:
-        print("Invalid argument. Use 'warped', 'contour', or 'both'.")
+        print("Invalid argument. Use 'warped', 'contour', or 'both'.")  
