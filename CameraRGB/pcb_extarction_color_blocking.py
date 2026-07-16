@@ -120,9 +120,10 @@ def color_blocking(frame):
     
     hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     output_frame = hsv_frame.copy()
+    output_frame[:, :, 0] = 0  # Set the hue channel to 0 (black) for all pixels
 
     for color, (lower, upper) in colors.items():
-        lower_bound = np.array([lower, 50, 50])
+        lower_bound = np.array([lower, 1, 1])
         upper_bound = np.array([upper, 255, 255])
         mask = cv2.inRange(hsv_frame, lower_bound, upper_bound)
         output_frame[mask > 0] = color_sub[color]
