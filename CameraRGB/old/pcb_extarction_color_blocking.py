@@ -38,7 +38,16 @@ def compute_size(rect):
 
     return maxWidth, maxHeight
 
-
+def resize_frame(frame, max_dim):
+    w, h = frame.shape[1], frame.shape[0]
+    if w > h:
+        scale = max_dim / w
+    else:
+        scale = max_dim / h
+    new_w = int(w * scale)
+    new_h = int(h * scale)
+    resized_frame = cv2.resize(frame, (new_w, new_h))
+    return resized_frame
 
 def warp_perspective(frame, box):
     rect = order_points(box)
@@ -58,13 +67,15 @@ def warp_perspective(frame, box):
 
     return warped
 
-def find_group_contour(frame):
+
+def find_group_contour(frame,kernel_size):
+    # by default keep kernel_size as 25
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     edges = cv2.Canny(gray, 60, 150)
 
     # Merge all nearby edges together
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25,25))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
     merged = cv2.dilate(edges, kernel, iterations=2)
     merged = cv2.morphologyEx(
         merged,
@@ -82,45 +93,205 @@ def find_group_contour(frame):
     if len(contours) == 0:
         return None, merged
 
-    largest = max(contours, key=cv2.contourArea)
+    # eliminate far away contours
+    centers = []
+
+    for c in contours:
+        M = cv2.moments(c)
+        if M["m00"] == 0:
+            continue
+
+        cx = int(M["m10"] / M["m00"])
+        cy = int(M["m01"] / M["m00"])
+        centers.append((cx, cy, c))
+
+    avg_distances = []
+
+    for i, (cx1, cy1, _) in enumerate(centers):
+
+        dists = []
+
+        for j, (cx2, cy2, _) in enumerate(centers):
+            if i == j:
+                continue
+
+            d = np.hypot(cx1 - cx2, cy1 - cy2)
+            dists.append(d)
+
+        avg_distances.append(np.mean(dists))
+
+    mean_dist = np.mean(avg_distances)
+    std_dist = np.std(avg_distances)
+
+    filtered = []
+
+    for (cx, cy, contour), d in zip(centers, avg_distances):
+
+        if d < mean_dist + 2 * std_dist:
+            filtered.append(contour)
+    if (len(filtered) == 0):
+        return None, merged
+    
+    largest = max(filtered, key=cv2.contourArea)
 
     return largest, merged
+
+
+def connect_small_components_algorithm():
+    while True:
+        print("Contour detection mode")
+        ret , frame = cap.read()
+        if not ret:
+            print("Failed to grab frame")
+            exit()
+        contour, debug = find_group_contour(frame, kernel_size=50)
+        if contour is not None:
+            display = frame.copy()
+            cv2.drawContours(display, [contour], -1, (0,255,0), 3)
+            display = resize_frame(display, 600)
+            cv2.imshow("Contour", display)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+    cap.release()
+    cv2.destroyAllWindows()
+
+def connect_small_components_algorithm_crop():
+    while True:
+        print("Crop mode")
+        ret , frame = cap.read()
+        if not ret:
+            print("Failed to grab frame")
+            exit()
+        contour, debug = find_group_contour(frame, kernel_size=50)
+        if contour is not None:
+            rect = cv2.minAreaRect(contour)
+            box = cv2.boxPoints(rect)
+            box = np.int32(box)
+            cropped = warp_perspective(frame, box)
+            cropped = resize_frame(cropped, 600)
+            cv2.imshow("Cropped", cropped)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+    cap.release()
+    cv2.destroyAllWindows()
+
+
+
+
+
+def convex_hull_algorithm():
+    while True:
+        ret , frame = cap.read()
+        if not ret:
+            print("Failed to grab frame")
+            exit()
+        result = convex_hull_board(frame)
+        if result is not None:
+            hull, box = result
+            cv2.drawContours(frame, [hull], -1, (0,255,0), 2)
+            # cropped = warp_perspective(frame, box)
+            cv2.imshow("Hull", frame)
+            # cv2.imshow("Crop", cropped)
+
+
+def pca_rectangle(contour):
+    """
+    Compute a rotated rectangle around a contour using PCA.
+
+    Returns:
+        box  : (4,2) integer corner points
+        angle: rotation angle in degrees
+    """
+
+    # Convert contour to Nx2 float array
+    pts = contour.reshape(-1, 2).astype(np.float32)
+
+    # PCA
+    mean, eigenvectors, eigenvalues = cv2.PCACompute2(
+        pts,
+        mean=np.empty((0))
+    )
+
+    center = mean[0]
+
+    # Principal direction
+    axis1 = eigenvectors[0]
+    angle = np.arctan2(axis1[1], axis1[0])
+
+    # Rotation matrix (rotate contour so PCB becomes horizontal)
+    c = np.cos(-angle)
+    s = np.sin(-angle)
+
+    R = np.array([
+        [c, -s],
+        [s,  c]
+    ])
+
+    rotated = (pts - center) @ R.T
+
+    xmin = np.min(rotated[:, 0])
+    xmax = np.max(rotated[:, 0])
+
+    ymin = np.min(rotated[:, 1])
+    ymax = np.max(rotated[:, 1])
+
+    rect = np.array([
+        [xmin, ymin],
+        [xmax, ymin],
+        [xmax, ymax],
+        [xmin, ymax]
+    ])
+
+    # Rotate rectangle back
+    R_inv = R.T
+
+    box = rect @ R_inv + center
+
+    return np.int32(box), np.degrees(angle)
+
+
+def pca_algorithm():
+    while True:
+        ret , frame = cap.read()
+        if not ret:
+            print("Failed to grab frame")
+            exit()
+        contour, debug = find_group_contour(frame, kernel_size=50)
+        if contour is not None:
+            display = frame.copy()
+            cv2.drawContours(display, [contour], -1, (0,255,0), 3)
+
+            box, angle = pca_rectangle(contour)
+
+            display = frame.copy()
+
+            cv2.drawContours(display, [box], 0, (0,255,0), 3)
+
+            warped = warp_perspective(frame, box)
+            display = resize_frame(display, 600)
+            warped = resize_frame(warped, 600)
+            cv2.imshow("PCA Rectangle", display)
+            cv2.imshow("Warp", warped)
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+    cap.release()
+    cv2.destroyAllWindows()
+
+
 
 if __name__ == "__main__":
     arg = sys.argv[1]
     if arg == "contour":
-        while True:
-            print("Contour detection mode")
-            ret , frame = cap.read()
-            if not ret:
-                print("Failed to grab frame")
-                exit()
-            contour, debug = find_group_contour(frame)
-            if contour is not None:
-                display = frame.copy()
-                cv2.drawContours(display, [contour], -1, (0,255,0), 3)
-                cv2.imshow("Contour", display)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+        # connect_small_components_algorithm()
+        pca_algorithm()
+        # convex_hull_algorithm()
     elif arg == "crop":
-        while True:
-            print("Crop mode")
-            ret , frame = cap.read()
-            if not ret:
-                print("Failed to grab frame")
-                exit()
-            rect = cv2.minAreaRect(frame)
-            box = cv2.boxPoints(rect)
-            box = np.int32(box)
-            cropped = warp_perspective(frame, box)
-            cv2.imshow("Cropped", cropped)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+        connect_small_components_algorithm_crop()
     else:
         print("Invalid argument. Use 'contour' or 'crop'.")
         exit()
-    cap.release()
-    cv2.destroyAllWindows()
+
     
     
 # def order_points(pts):
