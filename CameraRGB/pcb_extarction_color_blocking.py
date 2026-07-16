@@ -117,12 +117,14 @@ def trace_components(warped, blur_ksize=3, canny_low=40, canny_high=120):
 def color_blocking(frame):
     colors ={"red":(0,10), "orange":(11,25), "yellow":(26,34), "green":(35,85), "blue":(86,125), "purple":(126,160), "red2":(161,179)}
     color_sub = {"red":(0,255,255),"orange":(20,255,255),"yellow":(30,255,255),"green":(60,255,255),"blue":(120,255,255),"purple":(150,255,255),"red2":(170,255,255)}
+    
+    hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    output_frame = hsv_frame.copy()
+
     for color, (lower, upper) in colors.items():
         lower_bound = np.array([lower, 50, 50])
         upper_bound = np.array([upper, 255, 255])
-        hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(hsv_frame, lower_bound, upper_bound)
-        output_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         output_frame[mask > 0] = color_sub[color]
     return output_frame
 
