@@ -144,10 +144,27 @@ def cam_test():
     cap.release()
     cv2.destroyAllWindows()
 
+def cam():
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            print("Failed to grab frame")
+            break
+        
+        cv2.imshow("Color Blocked Frame", frame)
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
 
 
 if __name__ == "__main__":
-    # argument = sys.argv[1]
+    argument = sys.argv[1]
+    if argument is not null and argument == "origin":
+        cam()
     # if argument == "warped":
     # elif argument == "contour":
     # elif argument == "both":
