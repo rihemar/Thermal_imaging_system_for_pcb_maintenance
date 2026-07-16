@@ -136,7 +136,8 @@ def cam_test():
             break
         
         color_blocked_frame = color_blocking(frame)
-        cv2.imshow("Color Blocked Frame", color_blocked_frame)
+        resized_frame = cv2.resize(color_blocked_frame, (400, 600))
+        cv2.imshow("Color Blocked Frame", resized_frame)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
