@@ -2,7 +2,6 @@ import sys
 import numpy as np
 import cv2
 
-from Thermal_imaging_system_for_pcb_maintenance.CameraRGB.pcb_extraction import warp_perspective
 
 url = "http://192.168.1.181:81/stream"
 
@@ -10,6 +9,54 @@ cap = cv2.VideoCapture(url)
 if not cap.isOpened():
     print("Could not connect to IP Webcam")
     exit()
+
+
+def order_points(pts):
+    rect = np.zeros((4, 2), dtype="float32")
+
+    s = pts.sum(axis=1)
+    diff = np.diff(pts, axis=1)
+
+    rect[0] = pts[np.argmin(s)]  # top-left
+    rect[2] = pts[np.argmax(s)]  # bottom-right
+    rect[1] = pts[np.argmin(diff)]  # top-right
+    rect[3] = pts[np.argmax(diff)]  # bottom-left
+
+    return rect
+
+
+def compute_size(rect):
+    (tl, tr, br, bl) = rect
+
+    widthA = np.linalg.norm(br - bl)
+    widthB = np.linalg.norm(tr - tl)
+    maxWidth = max(int(widthA), int(widthB))
+
+    heightA = np.linalg.norm(tr - br)
+    heightB = np.linalg.norm(tl - bl)
+    maxHeight = max(int(heightA), int(heightB))
+
+    return maxWidth, maxHeight
+
+
+
+def warp_perspective(frame, box):
+    rect = order_points(box)
+
+    w, h = compute_size(rect)
+
+    dst = np.array([
+        [0, 0],
+        [w - 1, 0],
+        [w - 1, h - 1],
+        [0, h - 1]
+    ], dtype="float32")
+
+    M = cv2.getPerspectiveTransform(rect, dst)
+
+    warped = cv2.warpPerspective(frame, M, (w, h))
+
+    return warped
 
 def find_group_contour(frame):
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
