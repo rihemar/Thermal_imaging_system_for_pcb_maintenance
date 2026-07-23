@@ -76,7 +76,7 @@ if __name__ == "__main__":
         if not ret:
             print("Failed to grab frame")
             break
-        frame = adjust_saturation(frame, factor=3.0)
+        # frame = adjust_saturation(frame, factor=3.0)
 
         frame = resize_frame(frame, 600)
 
@@ -117,7 +117,7 @@ def color_distance_iteration(debug=False):
     if not ret:
         print("Failed to grab frame")
         return 
-    frame = adjust_saturation(frame, factor=3.0)
+    frame = adjust_saturation(frame, factor=1.5)
 
     frame = resize_frame(frame, 1000)
 
@@ -128,7 +128,7 @@ def color_distance_iteration(debug=False):
         cv2.RETR_EXTERNAL,
         cv2.CHAIN_APPROX_SIMPLE
     )
-
+    cropped = None
     if contours:
 
         largest = max(contours, key=cv2.contourArea)
@@ -136,7 +136,7 @@ def color_distance_iteration(debug=False):
         rect = cv2.minAreaRect(largest)
         box = cv2.boxPoints(rect)
         box = np.int32(box)
-
+        box = optimize_box(mask, box)
         cv2.drawContours(frame, [box], 0, (0,255,0), 2)
 
         cropped = warp_perspective(frame, box)

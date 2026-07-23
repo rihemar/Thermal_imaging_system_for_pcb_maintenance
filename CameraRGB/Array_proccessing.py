@@ -73,7 +73,7 @@ def reduceContour(edge, rect, shrink=1, threshold=0.3):
     return best_rect
 
 def LoadArray():
-    arr = np.loadtxt("CameraArray.txt")
+    arr = np.loadtxt("../data/CameraArray.txt")
     return arr
 
 def ConvertArrayToImage(arr):
@@ -88,14 +88,16 @@ def ConvertArrayToImage(arr):
 
 
 
-def Array_processing():
+def Array_processing(debug_mode=False):
         
     arr = LoadArray()
     if arr is None:
         print("Failed to load array from CameraArray.txt. Please check the file.")
         return None, None
     colored = ConvertArrayToImage(arr)
-
+    
+    if debug_mode:
+        cv2.imshow("Colored Image", colored)
 
     edge = cv2.Canny(colored,200,300)
 

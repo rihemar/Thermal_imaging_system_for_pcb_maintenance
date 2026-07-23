@@ -1,6 +1,59 @@
 import cv2
 import numpy as np
 
+
+def move_edge(box, edge, pixels):
+    """
+    box : (4,2) float32 clockwise
+    edge: 0,1,2,3
+    pixels: inward movement
+    """
+
+    box = box.astype(np.float32).copy()
+
+    p1 = box[edge]
+    p2 = box[(edge + 1) % 4]
+
+    edge_vec = p2 - p1
+    edge_vec /= np.linalg.norm(edge_vec)
+
+    # inward normal (clockwise polygon)
+    normal = np.array([-edge_vec[1], edge_vec[0]])
+
+    box[edge] += normal * pixels
+    box[(edge + 1) % 4] += normal * pixels
+
+    return box
+
+def score_move(binary, old_box, new_box):
+
+    old_mask = np.zeros(binary.shape, np.uint8)
+    new_mask = np.zeros(binary.shape, np.uint8)
+
+    cv2.fillPoly(old_mask, [old_box.astype(np.int32)], 255)
+    cv2.fillPoly(new_mask, [new_box.astype(np.int32)], 255)
+
+    removed = cv2.bitwise_and(old_mask, cv2.bitwise_not(new_mask))
+
+    removed_pixels = binary[removed > 0]
+
+    ones = np.count_nonzero(removed_pixels)
+    zeros = removed_pixels.size - ones
+
+    if removed_pixels.size == 0:
+        return 0
+
+    return zeros / removed_pixels.size
+
+
+
+def optimize_box(binary, box, max_iterations=10, move_pixels=2, threshold=0.95):
+    for edge in range(max_iterations):
+        candidate = move_edge(box, edge, move_pixels)
+
+    if score_move(binary, box, candidate) > threshold:
+        box = candidate
+
 def resize_frame(frame, max_dim):
     w, h = frame.shape[1], frame.shape[0]
     if w > h:
