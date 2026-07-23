@@ -250,7 +250,7 @@ int main()
                 for (int c = 0; c < SRC_W; c++)
                     oriented[r][c] = mlx90640To[32 * (23 - r) + c];
             
-	    std::ofstream file("../CameraRGB/CameraArray.txt");
+	    std::ofstream file("../data/CameraArray.txt");
             
 	    if (!file.is_open()) {
                  std::cout << "Failed to open file.\n";
