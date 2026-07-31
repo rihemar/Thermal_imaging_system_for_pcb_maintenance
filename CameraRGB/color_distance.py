@@ -7,12 +7,6 @@ import cv2
 import numpy as np
 
 from tools import *
-url = "http://192.168.1.15:81/stream"
-
-cap = cv2.VideoCapture(url)
-if not cap.isOpened():
-    print("Could not connect to IP Webcam")
-    exit()
 
 def extract_pcb_mask(frame, border_size=30, threshold=25):
 
@@ -68,18 +62,30 @@ def extract_pcb_mask(frame, border_size=30, threshold=25):
 
     return mask, distance_vis
 
+def mouse_position(event, x, y, flags, param):
+    if event == cv2.EVENT_MOUSEMOVE:
+        print(f"x={x}, y={y}")
 
 if __name__ == "__main__":
-        
+
+    url = "http://192.168.1.19:81/stream"
+
+    cap = cv2.VideoCapture(url)
+    if not cap.isOpened():
+        print("Could not connect to IP Webcam")
+        exit()
+
     while True:
         ret , frame = cap.read()
         if not ret:
             print("Failed to grab frame")
             break
         # frame = adjust_saturation(frame, factor=3.0)
-
-        frame = resize_frame(frame, 600)
-
+        # w, h = frame.shape[1], frame.shape[0]
+        # print(f"Frame dimensions: width={w}, height={h}")   #3/4
+        frame = resize_width(frame, 600)
+        #cropp
+        # frame = frame[0:frame.shape[0], 250:frame.shape[1]]
         mask, distance = extract_pcb_mask(frame,threshold=70)
 
         contours, _ = cv2.findContours(
@@ -103,6 +109,8 @@ if __name__ == "__main__":
             cv2.imshow("Mask", mask)
             cv2.imshow("Distance", distance)
             cv2.imshow("Contour", frame)
+            cv2.setMouseCallback("Contour", mouse_position)
+
             cv2.imshow("Cropped", cropped)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -141,9 +149,11 @@ def color_distance_iteration(debug=False):
 
         cropped = warp_perspective(frame, box)
         if(debug):
+
             cv2.imshow("Mask", mask)
             cv2.imshow("Distance", distance)
             cv2.imshow("Contour", frame)
+            cv2.setMouseCallback("Contour", mouse_position)
             cv2.imshow("Cropped", cropped)
     return cropped
 

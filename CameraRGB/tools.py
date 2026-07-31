@@ -65,6 +65,14 @@ def resize_frame(frame, max_dim):
     resized_frame = cv2.resize(frame, (new_w, new_h))
     return resized_frame
 
+def resize_width(frame, max_dim):
+    w, h = frame.shape[1], frame.shape[0]
+    scale = max_dim / w
+    new_w = int(max_dim)
+    new_h = int(h * scale)
+    resized_frame = cv2.resize(frame, (new_w, new_h))
+    return resized_frame
+
 def order_points(pts):
     rect = np.zeros((4, 2), dtype="float32")
 
