@@ -1,7 +1,7 @@
 import numpy as np
 import cv2
 import sys
-
+from tools import *
 #resizing function
 def resizeWidth(frame,size,interpole):
 	h,w = frame.shape[:2]
@@ -73,7 +73,11 @@ def reduceContour(edge, rect, shrink=1, threshold=0.3):
     return best_rect
 
 def LoadArray():
-    arr = np.loadtxt("../data/CameraArray.txt")
+    arr = np.loadtxt("./data/CameraArray.txt")
+    # print(arr.shape)
+    if arr is None:
+        print("Failed to load array from CameraArray.txt. Please check the file.")
+        return None
     return arr
 
 def ConvertArrayToImage(arr):
@@ -86,7 +90,15 @@ def ConvertArrayToImage(arr):
 
     return colored
 
-
+def display_image():
+    arr = LoadArray()
+    if arr is None:
+        print("Failed to load array from CameraArray.txt. Please check the file.")
+        return None
+    # print(f"Array shape: {arr.shape}, min: {np.min(arr)}, max: {np.max(arr)}")
+    colored = ConvertArrayToImage(arr)
+    colored = resize_width(colored, 600)
+    return colored
 
 def Array_processing(debug_mode=False):
         
