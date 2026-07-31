@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 
 from tools import *
-url = "http://192.168.1.15:81/stream"
+url = "http://192.168.1.19:81/stream"
 
 cap = cv2.VideoCapture(url)
 if not cap.isOpened():
