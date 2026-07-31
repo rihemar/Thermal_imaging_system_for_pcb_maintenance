@@ -80,12 +80,16 @@ if __name__ == "__main__":
     if not cap.isOpened():
         print("Could not connect to IP Webcam")
         exit()
+    
 
     while True:
         ret , frame = cap.read()
         if not ret:
             print("Failed to grab frame")
             break
+
+        #cv2.imwrite("./data/RGB_frame.jpg",frame)
+
         # frame = adjust_saturation(frame, factor=3.0)
         # w, h = frame.shape[1], frame.shape[0]
         # print(f"Frame dimensions: width={w}, height={h}")   #3/4

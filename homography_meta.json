@@ -1,0 +1,44 @@
+{
+  "thermal_image": "./data/thermal_frame.jpg",
+  "rgb_image": "./data/RGB_frame.jpg",
+  "points_thermal": [
+    [
+      384.0,
+      240.0
+    ],
+    [
+      356.0,
+      359.0
+    ],
+    [
+      301.0,
+      152.0
+    ],
+    [
+      450.0,
+      154.0
+    ]
+  ],
+  "points_rgb": [
+    [
+      1372.1600341796875,
+      954.3679809570312
+    ],
+    [
+      1024.0,
+      915.4559936523438
+    ],
+    [
+      1599.488037109375,
+      1245.1839599609375
+    ],
+    [
+      1689.5999755859375,
+      694.27197265625
+    ]
+  ],
+  "inliers": 4,
+  "total_points": 4,
+  "reprojection_error_mean_px": 0.0,
+  "reprojection_error_max_px": 0.0
+}

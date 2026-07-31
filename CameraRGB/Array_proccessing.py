@@ -100,6 +100,19 @@ def display_image():
     colored = resize_width(colored, 600)
     return colored
 
+    
+
+def convert_and_save_image():
+    arr = LoadArray()
+    if arr is None:
+        print("Failed to load array from CameraArray.txt. Please check the file.")
+        return None
+    colored = ConvertArrayToImage(arr)
+    colored = resize_width(colored, 600)
+    cv2.imwrite("./data/thermal_frame.jpg",colored)
+
+    
+
 def Array_processing(debug_mode=False):
         
     arr = LoadArray()
@@ -194,11 +207,14 @@ def debug():
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q'):
             break
-if __name__ == "__main__":
-    argument = sys.argv[1]
-    if argument == "test":
-        test_Array_processing()
-    elif argument == "debug":
-        debug()
-    else:
-        print("Invalid argument. Use 'test' or 'debug'.")
+
+# if __name__ == "__main__":
+#     argument = sys.argv[1]
+#     if argument == "test":
+#         test_Array_processing()
+#     elif argument == "debug":
+#         debug()
+#     else:
+#         print("Invalid argument. Use 'test' or 'debug'.")
+
+convert_and_save_image()
