@@ -225,8 +225,7 @@ def normalize_temp_to_uint8(temp_map, vmin, vmax):
     normalized = (temp_map - vmin) / (vmax - vmin) * 255.0
     return np.clip(normalized, 0, 255).astype(np.uint8)
  
- def build_component_aware_overlay(temp_warped, valid_mask, component_contours,
-                                   colormap=cv2.COLORMAP_INFERNO):
+def build_component_aware_overlay(temp_warped, valid_mask, component_contours,colormap=cv2.COLORMAP_INFERNO):
     h, w = temp_warped.shape[:2]
     uniform_temp_map = temp_warped.copy()
     covered_mask = np.zeros((h, w), dtype=np.uint8)
