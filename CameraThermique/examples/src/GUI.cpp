@@ -269,6 +269,23 @@ int main()
 
 	    slidingWindowUpscale(oriented, upscaled);
 	    	
+         std::ofstream file2("./data/CameraArrayScaled.txt");
+            
+	    if (!file2.is_open()) {
+                 std::cout << "Failed to open file.\n";
+            return 1;
+            }
+            
+	    for (int i = 0; i < DST_H; i++) {
+        	for (int j = 0; j < DST_W; j++) {
+            		file2 << upscaled[i][j];
+            		if (j < DST_W - 1)
+                	file2 << ' ';
+        	}
+        	file2 << '\n';
+    	    }
+	    file2.close();
+
             // stats
             minT = 300.0f; maxT = -300.0f;
             double sum = 0.0;
