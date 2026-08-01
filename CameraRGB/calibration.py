@@ -167,7 +167,8 @@ def calibrer_homographie(thermal_path, rgb_path, output_path, min_points=4):
     plus tard (evite tout decalage d'echelle en Etape 4).
     """
     temp_matrix = load_thermal_matrix(thermal_path)
-    thermal_img = matrix_to_display_image(temp_matrix)  # BGR, meme resolution que la matrice
+    thermal_img_native = matrix_to_display_image(temp_matrix)  # BGR, resolution native (ex: 32x24)
+    thermal_img_display, upscale_factor = upscale_for_clicking(thermal_img_native, target_min_dim=600)
     rgb_img = rgb_path if isinstance(rgb_path, np.ndarray) else cv2.imread(rgb_path)
 
     if rgb_img is None:
@@ -179,13 +180,18 @@ def calibrer_homographie(thermal_path, rgb_path, output_path, min_points=4):
     print("Cliquez sur les MEMES points physiques (ex: resistances,")
     print("coins de composants) dans le MEME ORDRE sur les deux images.")
     print(f"Resolution native de la matrice thermique : {temp_matrix.shape[1]}x{temp_matrix.shape[0]} "
-          f"(l'affichage est agrandi pour faciliter le clic, sans changer les coordonnees enregistrees).")
+          f"(affichage agrandi x{upscale_factor:.1f} pour faciliter le clic).")
 
-    # 1. Points sur la visualisation de la matrice thermique (INTER_NEAREST = pixels bien distincts)
+    # 1. Points sur la visualisation AGRANDIE de la matrice thermique (INTER_NEAREST = pixels bien distincts)
     picker_thermal = PointPicker(
-        thermal_img, "1/2 - Points sur matrice THERMIQUE (q pour valider)", interpolation=cv2.INTER_NEAREST
+        thermal_img_display, "1/2 - Points sur matrice THERMIQUE (q pour valider)", interpolation=cv2.INTER_NEAREST
     )
-    pts_thermal = picker_thermal.pick(min_points=min_points)
+    pts_thermal_display = picker_thermal.pick(min_points=min_points)
+
+    # Reconversion : coordonnees affichees (agrandies) -> coordonnees natives de la matrice
+    pts_thermal = pts_thermal_display / upscale_factor
+    print(f"[Etape 1] Points thermiques reconvertis vers la resolution native ({temp_matrix.shape[1]}x{temp_matrix.shape[0]}) :")
+    print(f"          {pts_thermal.tolist()}")
 
     # 2. Points sur l'image RGB, dans le meme ordre
     picker_rgb = PointPicker(rgb_img, "2/2 - Points sur image RGB (MEME ORDRE, q pour valider)")
