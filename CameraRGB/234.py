@@ -293,6 +293,7 @@ def run_pipeline(thermal_path, rgb_path, blueprint_path, h1_path, out_path,
     else:
         # Par defaut : on considere que le PCB occupe tout le blueprint (les 4 coins de l'image)
         bh, bw = blueprint_img.shape[:2]
+        rh , rw = rgb_img.shape[:2]
         blueprint_corners = np.array([[0, 0], [bw - 1, 0], [bw - 1, bh - 1], [0, bh - 1]], dtype=np.float32)
         print("[Etape 3] Coins blueprint = coins de l'image entiere (utilisez --manual-blueprint-corners sinon).")
 
@@ -310,6 +311,8 @@ def run_pipeline(thermal_path, rgb_path, blueprint_path, h1_path, out_path,
 
     # ---------------- BONUS : overlay component-aware ----------------
     thermal_gray = cv2.cvtColor(thermal_img, cv2.COLOR_BGR2GRAY) if len(thermal_img.shape) == 3 else thermal_img
+    thermal_1 =cv2.warpPerspective(thermal_gray, H1, (rw, rh))
+    cv2.imshow("Thermal warped to RGB", thermal_1)
     thermal_warped = cv2.warpPerspective(thermal_gray, H_total, (bw, bh))
 
     rgb_warped = cv2.warpPerspective(rgb_img, H2, (bw, bh))  # RGB projete dans le repere blueprint
