@@ -353,7 +353,7 @@ def run_pipeline(thermal_path, rgb_path, blueprint_path, h1_path, out_path,
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Etapes 2/3/4 - Alignement PCB/Blueprint + Overlay thermique")
     parser.add_argument("--thermal", required=True, help="Image thermique")
-    parser.add_argument("--rgb", required=True, help="Image RGB du PCB")
+    #parser.add_argument("--rgb", required=True, help="Image RGB du PCB")
     parser.add_argument("--blueprint", required=True, help="Image JPG du plan/blueprint")
     parser.add_argument("--h1", required=True, help="Fichier .npy de la matrice d'homographie de l'Etape 1")
     parser.add_argument("--out", default="resultat_overlay.jpg", help="Fichier image de sortie")
@@ -365,14 +365,24 @@ if __name__ == "__main__":
                          help="Force la selection manuelle des coins PCB sur le blueprint")
     args = parser.parse_args()
 
-    run_pipeline(
-        thermal_path=args.thermal,
-        rgb_path=args.rgb,
-        blueprint_path=args.blueprint,
-        h1_path=args.h1,
-        out_path=args.out,
-        debug_dir=args.debug_dir,
-        alpha=args.alpha,
-        manual_blueprint_corners=args.manual_blueprint_corners,
-        manual_rgb_corners=args.manual_rgb_corners,
-    )
+    while True:
+        url = "http://192.168.1.19:81/stream"
+        cap = cv2.VideoCapture(url)
+        if not cap.isOpened():
+            print("Could not connect to IP Webcam")
+            exit()
+        ret , frame = cap.read()
+        if not ret:
+            print("Failed to grab frame")
+            break 
+        run_pipeline(
+            thermal_path=args.thermal,
+            rgb_path=frame,
+            blueprint_path=args.blueprint,
+            h1_path=args.h1,
+            out_path=args.out,
+            debug_dir=args.debug_dir,
+            alpha=args.alpha,
+            manual_blueprint_corners=args.manual_blueprint_corners,
+            manual_rgb_corners=args.manual_rgb_corners,
+        )
