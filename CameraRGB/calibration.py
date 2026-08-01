@@ -168,7 +168,7 @@ def calibrer_homographie(thermal_path, rgb_path, output_path, min_points=4):
     """
     temp_matrix = load_thermal_matrix(thermal_path)
     thermal_img = matrix_to_display_image(temp_matrix)  # BGR, meme resolution que la matrice
-    rgb_img = cv2.imread(rgb_path)
+    rgb_img = rgb_path if isinstance(rgb_path, np.ndarray) else cv2.imread(rgb_path)
 
     if rgb_img is None:
         raise FileNotFoundError(f"Image RGB introuvable : {rgb_path}")
