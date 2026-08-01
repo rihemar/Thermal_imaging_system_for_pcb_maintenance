@@ -264,7 +264,7 @@ def run_pipeline(thermal_path, rgb_path, blueprint_path, h1_path, out_path,
                   debug_dir=None, alpha=0.5, manual_blueprint_corners=False, manual_rgb_corners=False):
 
     thermal_img = cv2.imread(thermal_path)
-    rgb_img = cv2.imread(rgb_path)
+    rgb_img = rgb_path
     blueprint_img = cv2.imread(blueprint_path)
     H1 = np.load(h1_path)  # thermique -> RGB (Etape 1)
 
