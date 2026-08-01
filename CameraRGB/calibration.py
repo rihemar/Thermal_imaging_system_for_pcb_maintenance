@@ -22,12 +22,73 @@ import numpy as np
 import argparse
 import json
 import os
-from Array_proccessing import convert_and_save_image
+
+
+class NumpyEncoder(json.JSONEncoder):
+    """Encodeur JSON tolerant aux types numpy (ndarray, float32, int64, etc.)
+    Evite le TypeError 'Object of type ndarray is not JSON serializable'
+    meme si un tableau numpy brut se glisse dans les donnees a serialiser."""
+
+    def default(self, obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        return json.JSONEncoder.default(self, obj)
+
+
+def load_thermal_matrix(path):
+    """
+    Charge la matrice de temperatures brutes (en degres Celsius, un float par pixel).
+    Formats supportes : .npy (numpy), .csv ou .txt (texte).
+    """
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".npy":
+        matrix = np.load(path)
+    elif ext in (".csv", ".txt"):
+        matrix = np.loadtxt(path, delimiter=",") if ext == ".csv" else np.loadtxt(path)
+    else:
+        raise ValueError(f"Format non supporte : '{ext}'. Utilisez .npy, .csv ou .txt.")
+    matrix = matrix.astype(np.float32)
+    print(f"[Thermal] Matrice chargee : shape={matrix.shape}, "
+          f"min={matrix.min():.1f}C, max={matrix.max():.1f}C")
+    return matrix
+
+
+def matrix_to_display_image(matrix, colormap=cv2.COLORMAP_INFERNO):
+    """
+    Convertit la matrice de temperatures en image BGR affichable/cliquable,
+    A LA RESOLUTION NATIVE DU CAPTEUR (ex: 32x24).
+    """
+    vmin, vmax = float(matrix.min()), float(matrix.max())
+    if vmax - vmin < 1e-6:
+        norm = np.zeros_like(matrix, dtype=np.uint8)
+    else:
+        norm = np.clip((matrix - vmin) / (vmax - vmin) * 255.0, 0, 255).astype(np.uint8)
+    return cv2.applyColorMap(norm, colormap)
+
+
+def upscale_for_clicking(img, target_min_dim=600, interpolation=cv2.INTER_NEAREST):
+    """
+    Agrandit une petite image pour pouvoir cliquer confortablement, SANS toucher
+    au comportement par defaut de PointPicker (qui ne fait que retrecir les
+    images trop grandes). Retourne (image_agrandie, facteur_utilise) : il faudra
+    diviser les points cliques par ce facteur pour revenir a la resolution native.
+    """
+    h, w = img.shape[:2]
+    if min(h, w) >= target_min_dim:
+        return img.copy(), 1.0
+    factor = target_min_dim / min(h, w)
+    img_up = cv2.resize(img, (int(w * factor), int(h * factor)), interpolation=interpolation)
+    return img_up, factor
+
 
 class PointPicker:
     """Fenêtre interactive pour cliquer des points sur une image et les enregistrer dans l'ordre."""
 
-    def __init__(self, image, window_name, max_zoom_display=1000):
+    def __init__(self, image, window_name, max_zoom_display=1000, interpolation=cv2.INTER_LINEAR):
         self.original = image.copy()
         self.window_name = window_name
         self.points = []
@@ -37,7 +98,9 @@ class PointPicker:
         self.scale = 1.0
         if max(h, w) > max_zoom_display:
             self.scale = max_zoom_display / max(h, w)
-            self.display_img = cv2.resize(image, (int(w * self.scale), int(h * self.scale)))
+            self.display_img = cv2.resize(
+                image, (int(w * self.scale), int(h * self.scale)), interpolation=interpolation
+            )
         else:
             self.display_img = image.copy()
 
@@ -96,12 +159,17 @@ def calibrer_homographie(thermal_path, rgb_path, output_path, min_points=4):
     """
     Pipeline complet de l'Etape 1 :
     clic points -> calcul homographie RANSAC -> sauvegarde
-    """
-    thermal_img = cv2.imread(thermal_path)
-    rgb_img = rgb_path
 
-    if thermal_img is None:
-        raise FileNotFoundError(f"Image thermique introuvable : {thermal_path}")
+    IMPORTANT : thermal_path pointe maintenant vers la matrice radiometrique
+    (.npy / .csv / .txt), PAS une image JPG. On clique sur une VISUALISATION
+    colorisee de cette matrice, a sa resolution NATIVE (ex: 32x24), pour que
+    H1 soit calculee exactement dans le repere des donnees brutes utilisees
+    plus tard (evite tout decalage d'echelle en Etape 4).
+    """
+    temp_matrix = load_thermal_matrix(thermal_path)
+    thermal_img = matrix_to_display_image(temp_matrix)  # BGR, meme resolution que la matrice
+    rgb_img = cv2.imread(rgb_path)
+
     if rgb_img is None:
         raise FileNotFoundError(f"Image RGB introuvable : {rgb_path}")
 
@@ -110,9 +178,13 @@ def calibrer_homographie(thermal_path, rgb_path, output_path, min_points=4):
     print("=" * 60)
     print("Cliquez sur les MEMES points physiques (ex: resistances,")
     print("coins de composants) dans le MEME ORDRE sur les deux images.")
+    print(f"Resolution native de la matrice thermique : {temp_matrix.shape[1]}x{temp_matrix.shape[0]} "
+          f"(l'affichage est agrandi pour faciliter le clic, sans changer les coordonnees enregistrees).")
 
-    # 1. Points sur l'image thermique
-    picker_thermal = PointPicker(thermal_img, "1/2 - Points sur image THERMIQUE (q pour valider)")
+    # 1. Points sur la visualisation de la matrice thermique (INTER_NEAREST = pixels bien distincts)
+    picker_thermal = PointPicker(
+        thermal_img, "1/2 - Points sur matrice THERMIQUE (q pour valider)", interpolation=cv2.INTER_NEAREST
+    )
     pts_thermal = picker_thermal.pick(min_points=min_points)
 
     # 2. Points sur l'image RGB, dans le meme ordre
@@ -143,21 +215,21 @@ def calibrer_homographie(thermal_path, rgb_path, output_path, min_points=4):
 
     # 5. Sauvegarde de la matrice + metadonnees
     np.save(output_path, H)
-    # meta_path = os.path.splitext(output_path)[0] + "_meta.json"
-    # with open(meta_path, "w") as f:
-    #     json.dump({
-    #         "thermal_image": thermal_path,
-    #         "rgb_image": rgb_path,
-    #         "points_thermal": pts_thermal.tolist(),
-    #         "points_rgb": pts_rgb.tolist(),
-    #         "inliers": inliers,
-    #         "total_points": len(pts_thermal),
-    #         "reprojection_error_mean_px": float(erreurs.mean()),
-    #         "reprojection_error_max_px": float(erreurs.max()),
-    #     }, f, indent=2)
+    meta_path = os.path.splitext(output_path)[0] + "_meta.json"
+    with open(meta_path, "w") as f:
+        json.dump({
+            "thermal_image": thermal_path,
+            "rgb_image": rgb_path,
+            "points_thermal": pts_thermal.tolist(),
+            "points_rgb": pts_rgb.tolist(),
+            "inliers": inliers,
+            "total_points": len(pts_thermal),
+            "reprojection_error_mean_px": float(erreurs.mean()),
+            "reprojection_error_max_px": float(erreurs.max()),
+        }, f, indent=2, cls=NumpyEncoder)
 
     print(f"\nMatrice d'homographie sauvegardee : {output_path}")
-    # print(f"Metadonnees sauvegardees          : {meta_path}")
+    print(f"Metadonnees sauvegardees          : {meta_path}")
     print("\nMatrice H :")
     print(H)
 
@@ -175,9 +247,9 @@ def calibrer_par_defaut():
     if not ret:
         print("Failed to grab frame")
         return 
-    convert_and_save_image()  # Assurez-vous que CameraArray.txt est présent et correct
+    # convert_and_save_image()  # Assurez-vous que CameraArray.txt est présent et correct
     calibrer_homographie(
-        thermal_path="./data/thermal_frame.jpg",
+        thermal_path="./data/CameraArray.txt",  # Chemin vers la matrice radiometrique
         rgb_path=frame,
         output_path="./data/homography_default.npy",
         min_points=4
