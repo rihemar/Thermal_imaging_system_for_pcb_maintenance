@@ -143,21 +143,21 @@ def calibrer_homographie(thermal_path, rgb_path, output_path, min_points=4):
 
     # 5. Sauvegarde de la matrice + metadonnees
     np.save(output_path, H)
-    meta_path = os.path.splitext(output_path)[0] + "_meta.json"
-    with open(meta_path, "w") as f:
-        json.dump({
-            "thermal_image": thermal_path,
-            "rgb_image": rgb_path,
-            "points_thermal": pts_thermal.tolist(),
-            "points_rgb": pts_rgb.tolist(),
-            "inliers": inliers,
-            "total_points": len(pts_thermal),
-            "reprojection_error_mean_px": float(erreurs.mean()),
-            "reprojection_error_max_px": float(erreurs.max()),
-        }, f, indent=2)
+    # meta_path = os.path.splitext(output_path)[0] + "_meta.json"
+    # with open(meta_path, "w") as f:
+    #     json.dump({
+    #         "thermal_image": thermal_path,
+    #         "rgb_image": rgb_path,
+    #         "points_thermal": pts_thermal.tolist(),
+    #         "points_rgb": pts_rgb.tolist(),
+    #         "inliers": inliers,
+    #         "total_points": len(pts_thermal),
+    #         "reprojection_error_mean_px": float(erreurs.mean()),
+    #         "reprojection_error_max_px": float(erreurs.max()),
+    #     }, f, indent=2)
 
     print(f"\nMatrice d'homographie sauvegardee : {output_path}")
-    print(f"Metadonnees sauvegardees          : {meta_path}")
+    # print(f"Metadonnees sauvegardees          : {meta_path}")
     print("\nMatrice H :")
     print(H)
 
@@ -177,7 +177,7 @@ def calibrer_par_defaut():
         return 
     convert_and_save_image()  # Assurez-vous que CameraArray.txt est présent et correct
     calibrer_homographie(
-        thermal_path="./data/thermal_default.jpg",
+        thermal_path="./data/thermal_frame.jpg",
         rgb_path=frame,
         output_path="./data/homography_default.npy",
         min_points=4
