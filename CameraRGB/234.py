@@ -40,6 +40,17 @@ import os
 # ----------------------------------------------------------------------------
 # Utilitaires generaux
 # ----------------------------------------------------------------------------
+def load_thermal_matrix(path):
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".npy":
+        matrix = np.load(path)
+    elif ext in (".csv", ".txt"):
+        matrix = np.loadtxt(path, delimiter=",") if ext == ".csv" else np.loadtxt(path)
+    else:
+        raise ValueError(f"Format non supporte : '{ext}'. Utilisez .npy, .csv ou .txt.")
+    matrix = matrix.astype(np.float32)
+    print(f"[Thermal] Matrice chargee : shape={matrix.shape}, min={matrix.min():.1f}C, max={matrix.max():.1f}C")
+    return matrix
 
 def order_points(pts):
     """Ordonne 4 points dans l'ordre : haut-gauche, haut-droit, bas-droit, bas-gauche."""
@@ -169,16 +180,13 @@ def compute_alignment_homography(rgb_corners, blueprint_corners):
 # ETAPE 4a : Detection du point le plus chaud
 # ----------------------------------------------------------------------------
 
-def find_hotspot(thermal_img):
-    """Retourne (x, y, valeur) du pixel le plus chaud sur l'image thermique (niveaux de gris)."""
-    if len(thermal_img.shape) == 3:
-        thermal_gray = cv2.cvtColor(thermal_img, cv2.COLOR_BGR2GRAY)
-    else:
-        thermal_gray = thermal_img
-    thermal_gray = cv2.GaussianBlur(thermal_gray, (5, 5), 0)  # evite un pixel bruite isole
-    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(thermal_gray)
+def find_hotspot(temp_matrix):
+    """Retourne (x, y, temperature_reelle_C) du pixel le plus chaud de la matrice radiometrique."""
+    smoothed = cv2.GaussianBlur(temp_matrix, (5, 5), 0)  # evite un pixel bruite isole
+    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(smoothed)
     return max_loc[0], max_loc[1], max_val
-
+ 
+ 
 
 def project_point(x, y, H_total):
     """Projette un point (x, y) via une matrice d'homographie 3x3 (coordonnees homogenes)."""
@@ -190,88 +198,82 @@ def project_point(x, y, H_total):
 # ----------------------------------------------------------------------------
 # BONUS : Overlay thermique "component-aware"
 # ----------------------------------------------------------------------------
-
-def detect_component_contours(rgb_blueprint_space, min_area_px=40, max_area_ratio=0.15):
-    """
-    Detecte les contours FERMES correspondant probablement a des composants
-    (footprints / silkscreen) sur l'image RGB deja projetee dans le repere blueprint.
-
-    Principe : un composant est une forme fermee -> on peut lui assigner UNE
-    temperature representative unique, evitant le "bavage" de couleur entre
-    composants voisins qu'un flou/interpolation bilineaire classique provoquerait.
-    """
+def detect_component_contours(rgb_blueprint_space, min_area_px=40, max_area_ratio=0.15,
+                               canny_low=40, canny_high=120, debug_dir=None):
     gray = cv2.cvtColor(rgb_blueprint_space, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(gray, 40, 120)
+    edges = cv2.Canny(gray, canny_low, canny_high)
     edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8), iterations=2)
 
-    contours, hierarchy = cv2.findContours(edges, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+    if debug_dir:
+        cv2.imwrite(os.path.join(debug_dir, "overlay_canny_edges.jpg"), edges)
 
+    contours, _ = cv2.findContours(edges, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
     img_area = rgb_blueprint_space.shape[0] * rgb_blueprint_space.shape[1]
     max_area_px = max_area_ratio * img_area
 
-    valid = []
-    for c in contours:
-        area = cv2.contourArea(c)
-        if min_area_px < area < max_area_px:
-            # on ne garde que des contours "raisonnablement fermes" (perimetre coherent avec l'aire)
-            valid.append(c)
-
+    valid = [c for c in contours if min_area_px < cv2.contourArea(c) < max_area_px]
     print(f"[Overlay] {len(valid)} contours de composants retenus (sur {len(contours)} bruts).")
     return valid
-
-
-def build_component_aware_overlay(thermal_warped_gray, rgb_blueprint_space, component_contours,
+ 
+def normalize_temp_to_uint8(temp_map, vmin, vmax):
+    """Convertit une carte de temperatures reelles (float, Celsius) en image 8-bit
+    pour affichage/colorisation, en se basant sur un min/max COMMUN a toute l'image
+    (indispensable pour que froid et chaud restent visuellement coherents sur toute
+    la carte, et ne s'ecrasent pas l'un l'autre par un mauvais clipping)."""
+    if vmax - vmin < 1e-6:
+        return np.zeros_like(temp_map, dtype=np.uint8)
+    normalized = (temp_map - vmin) / (vmax - vmin) * 255.0
+    return np.clip(normalized, 0, 255).astype(np.uint8)
+ 
+ def build_component_aware_overlay(temp_warped, valid_mask, component_contours,
                                    colormap=cv2.COLORMAP_INFERNO):
-    """
-    Construit une carte de temperature "par blocs" :
-      - a l'interieur de chaque contour de composant : valeur UNIFORME
-        = moyenne des pixels thermiques (deja recales) contenus dans ce contour.
-      - en dehors de tout contour (substrat / pistes / vide) : on garde
-        l'interpolation continue brute (comportement standard).
-
-    Retourne une image couleur (BGR) prete a etre fusionnee (alpha blend) avec le blueprint.
-    """
-    h, w = thermal_warped_gray.shape[:2]
-    uniform_temp_map = thermal_warped_gray.copy().astype(np.float32)
-
+    h, w = temp_warped.shape[:2]
+    uniform_temp_map = temp_warped.copy()
     covered_mask = np.zeros((h, w), dtype=np.uint8)
 
     for contour in component_contours:
         mask = np.zeros((h, w), dtype=np.uint8)
         cv2.drawContours(mask, [contour], -1, 255, thickness=cv2.FILLED)
-
-        mean_val = cv2.mean(thermal_warped_gray, mask=mask)[0]
-        uniform_temp_map[mask == 255] = mean_val
+        mask_valid = cv2.bitwise_and(mask, valid_mask)
+        if cv2.countNonZero(mask_valid) == 0:
+            continue
+        mean_temp = cv2.mean(temp_warped, mask=mask_valid)[0]
+        uniform_temp_map[mask == 255] = mean_temp
         covered_mask = cv2.bitwise_or(covered_mask, mask)
 
-    uniform_temp_map = np.clip(uniform_temp_map, 0, 255).astype(np.uint8)
+    valid_values = temp_warped[valid_mask > 0]
+    if valid_values.size == 0:
+        raise RuntimeError("Aucun pixel thermique valide apres warp. Verifiez H1/H2.")
+    vmin, vmax = float(valid_values.min()), float(valid_values.max())
 
-    colorized = cv2.applyColorMap(uniform_temp_map, colormap)
+    uint8_map = normalize_temp_to_uint8(uniform_temp_map, vmin, vmax)
+    colorized = cv2.applyColorMap(uint8_map, colormap)
 
     n_covered = int(np.count_nonzero(covered_mask))
-    pct = 100.0 * n_covered / (h * w)
-    print(f"[Overlay] {pct:.1f}% de la surface traitee en blocs uniformes par composant, "
-          f"le reste garde un degrade continu.")
+    n_valid = int(np.count_nonzero(valid_mask))
+    print(f"[Overlay] {100.0*n_covered/max(n_valid,1):.1f}% traite en blocs uniformes par composant.")
+    print(f"[Overlay] Plage : {vmin:.1f}C a {vmax:.1f}C")
 
-    return colorized
-
+    return colorized, vmin, vmax
 
 # ----------------------------------------------------------------------------
 # PIPELINE PRINCIPAL
 # ----------------------------------------------------------------------------
+def run_pipeline(thermal_path, rgb_img, blueprint_path, h1_path, out_path,
+                  debug_dir=None, alpha=0.5, manual_blueprint_corners=False, manual_rgb_corners=False,
+                  min_area_px=40, max_area_ratio=0.15, canny_low=40, canny_high=120):
 
-def run_pipeline(thermal_path, rgb_path, blueprint_path, h1_path, out_path,
-                  debug_dir=None, alpha=0.5, manual_blueprint_corners=False, manual_rgb_corners=False):
-
-    thermal_img = cv2.imread(thermal_path)
-    rgb_img = rgb_path
+    temp_matrix = load_thermal_matrix(thermal_path)  # temperatures REELLES en Celsius
     blueprint_img = cv2.imread(blueprint_path)
     H1 = np.load(h1_path)  # thermique -> RGB (Etape 1)
 
-    if thermal_img is None or rgb_img is None or blueprint_img is None:
-        raise FileNotFoundError("Une des images (thermal/rgb/blueprint) est introuvable.")
+    if rgb_img is None or blueprint_img is None:
+        raise FileNotFoundError("L'image RGB (frame webcam) ou le blueprint est introuvable.")
 
-    os.makedirs(debug_dir, exist_ok=True) if debug_dir else None
+    if debug_dir:
+        os.makedirs(debug_dir, exist_ok=True)
+
+    rh, rw = rgb_img.shape[:2]  # calcule une seule fois, avant les branches if/else
 
     # ---------------- ETAPE 2 ----------------
     if manual_rgb_corners:
@@ -291,84 +293,77 @@ def run_pipeline(thermal_path, rgb_path, blueprint_path, h1_path, out_path,
             blueprint_img, "Etape 3 (manuel) - 4 coins du PCB sur le BLUEPRINT (meme ordre qu'Etape 2)"
         ).pick(4)
     else:
-        # Par defaut : on considere que le PCB occupe tout le blueprint (les 4 coins de l'image)
         bh, bw = blueprint_img.shape[:2]
-        rh , rw = rgb_img.shape[:2]
         blueprint_corners = np.array([[0, 0], [bw - 1, 0], [bw - 1, bh - 1], [0, bh - 1]], dtype=np.float32)
         print("[Etape 3] Coins blueprint = coins de l'image entiere (utilisez --manual-blueprint-corners sinon).")
 
     H2 = compute_alignment_homography(rgb_corners, blueprint_corners)
-    H_total = H2 @ H1  # thermique -> blueprint, en une seule matrice composee
+    H_total = H2 @ H1
 
     bh, bw = blueprint_img.shape[:2]
 
     # ---------------- ETAPE 4a : hotspot ----------------
-    xt, yt, max_temp_val = find_hotspot(thermal_img)
-    print(f"[Etape 4] Pixel le plus chaud (thermique) : ({xt}, {yt}), intensite = {max_temp_val:.1f}")
+    xt, yt, hotspot_temp = find_hotspot(temp_matrix)
+    print(f"[Etape 4] Pixel le plus chaud (thermique) : ({xt}, {yt}), temperature = {hotspot_temp:.1f}C")
 
     xj, yj = project_point(xt, yt, H_total)
     print(f"[Etape 4] Point chaud projete sur le blueprint : ({xj:.1f}, {yj:.1f})")
 
     # ---------------- BONUS : overlay component-aware ----------------
-    thermal_gray = cv2.cvtColor(thermal_img, cv2.COLOR_BGR2GRAY) if len(thermal_img.shape) == 3 else thermal_img
-    thermal_1 =cv2.warpPerspective(thermal_gray, H1, (rw, rh))
-    cv2.imshow("Thermal warped to RGB", thermal_1)
-
-    thermal_warped = cv2.warpPerspective(thermal_gray, H_total, (bw, bh))
-
-    rgb_warped = cv2.warpPerspective(rgb_img, H2, (bw, bh))  # RGB projete dans le repere blueprint
-
-    component_contours = detect_component_contours(rgb_warped)
-    overlay_colorized = build_component_aware_overlay(thermal_warped, rgb_warped, component_contours)
-
-    # Masque : ne fusionner que la ou le thermique a effectivement ete projete (evite un cadre noir)
-    valid_mask = (thermal_warped > 0).astype(np.uint8) * 255
+    SENTINEL = -9999.0
+    temp_warped = cv2.warpPerspective(temp_matrix, H_total, (bw, bh), flags=cv2.INTER_LINEAR, borderValue=SENTINEL)
+    valid_mask = (temp_warped > SENTINEL + 1).astype(np.uint8) * 255
     valid_mask_3c = cv2.merge([valid_mask] * 3)
+
+    rgb_warped = cv2.warpPerspective(rgb_img, H2, (bw, bh))
+
+    component_contours = detect_component_contours(
+        rgb_warped, min_area_px=min_area_px, max_area_ratio=max_area_ratio,
+        canny_low=canny_low, canny_high=canny_high, debug_dir=debug_dir
+    )
+    overlay_colorized, vmin_c, vmax_c = build_component_aware_overlay(temp_warped, valid_mask, component_contours)
 
     blended = blueprint_img.copy()
     blend_zone = cv2.addWeighted(blueprint_img, 1 - alpha, overlay_colorized, alpha, 0)
     blended = np.where(valid_mask_3c > 0, blend_zone, blended)
 
-    # Reticule sur le point chaud
-    cv2.drawMarker(blended, (int(xj), int(yj)), (0, 0, 255),
-                    markerType=cv2.MARKER_CROSS, markerSize=30, thickness=3)
+    cv2.drawMarker(blended, (int(xj), int(yj)), (0, 0, 255), cv2.MARKER_CROSS, markerSize=30, thickness=3)
     cv2.circle(blended, (int(xj), int(yj)), 18, (0, 0, 255), 2)
-    cv2.putText(blended, f"Point chaud ({xj:.0f},{yj:.0f})", (int(xj) + 22, int(yj) - 10),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+    cv2.putText(blended, f"{hotspot_temp:.1f}C", (int(xj) + 22, int(yj) - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
     cv2.imwrite(out_path, blended)
     print(f"\n[OK] Resultat final sauvegarde : {out_path}")
 
     if debug_dir:
         cv2.imwrite(os.path.join(debug_dir, "etape3_rgb_warped.jpg"), rgb_warped)
-        cv2.imwrite(os.path.join(debug_dir, "thermal_warped.jpg"), thermal_warped)
+        cv2.imwrite(os.path.join(debug_dir, "thermal_warped_normalized.jpg"),
+                    normalize_temp_to_uint8(temp_warped, vmin_c, vmax_c))
         cv2.imwrite(os.path.join(debug_dir, "overlay_colorized.jpg"), overlay_colorized)
         with open(os.path.join(debug_dir, "resultats.json"), "w") as f:
             json.dump({
                 "hotspot_thermal_px": [xt, yt],
+                "hotspot_temperature_C": float(hotspot_temp),
                 "hotspot_blueprint_px": [xj, yj],
-                "max_intensity": float(max_temp_val),
+                "temperature_min_C": vmin_c,
+                "temperature_max_C": vmax_c,
                 "rgb_corners": rgb_corners.tolist(),
                 "blueprint_corners": blueprint_corners.tolist(),
-            }, f, indent=2)
+            }, f, indent=2, cls=NumpyEncoder)
         print(f"[Debug] Images intermediaires sauvegardees dans : {debug_dir}")
 
     return blended, (xj, yj)
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Etapes 2/3/4 - Alignement PCB/Blueprint + Overlay thermique")
-    parser.add_argument("--thermal", required=True, help="Image thermique")
-    #parser.add_argument("--rgb", required=True, help="Image RGB du PCB")
+    parser.add_argument("--thermal", required=True, help="Matrice radiometrique (.npy/.csv/.txt)")
     parser.add_argument("--blueprint", required=True, help="Image JPG du plan/blueprint")
     parser.add_argument("--h1", required=True, help="Fichier .npy de la matrice d'homographie de l'Etape 1")
     parser.add_argument("--out", default="resultat_overlay.jpg", help="Fichier image de sortie")
     parser.add_argument("--debug-dir", default="debug_output", help="Dossier pour les images intermediaires")
     parser.add_argument("--alpha", type=float, default=0.5, help="Opacite de l'overlay thermique (0-1)")
-    parser.add_argument("--manual-rgb-corners", action="store_true",
-                         help="Force la selection manuelle des coins PCB sur l'image RGB")
-    parser.add_argument("--manual-blueprint-corners", action="store_true",
-                         help="Force la selection manuelle des coins PCB sur le blueprint")
+    parser.add_argument("--manual-rgb-corners", action="store_true")
+    parser.add_argument("--manual-blueprint-corners", action="store_true")
     args = parser.parse_args()
 
     url = "http://192.168.1.19:81/stream"
@@ -376,12 +371,16 @@ if __name__ == "__main__":
     if not cap.isOpened():
         print("Could not connect to IP Webcam")
         exit()
-    ret , frame = cap.read()
+
+    ret, frame = cap.read()
     if not ret:
-        print("Failed to grab frame") 
-    out , (xi , xj)=run_pipeline(
+        print("Failed to grab frame")
+        cap.release()
+        exit()
+
+    blended, (xj, yj) = run_pipeline(
         thermal_path=args.thermal,
-        rgb_path=frame,
+        rgb_img=frame,
         blueprint_path=args.blueprint,
         h1_path=args.h1,
         out_path=args.out,
@@ -390,6 +389,8 @@ if __name__ == "__main__":
         manual_blueprint_corners=args.manual_blueprint_corners,
         manual_rgb_corners=args.manual_rgb_corners,
     )
-    cv2.imshow("Resultat Overlay", out)
-    cv2.drawMarker(out, (int(xi), int(xj)), (0, 255, 0), cv2.MARKER_CROSS, markerSize=20, thickness=2)
-    time.sleep(0.5)  # Attendre 1 seconde avant de capturer la prochaine image
+
+    cv2.imshow("Resultat Overlay", blended)
+    cv2.waitKey(0)
+    cap.release()
+    cv2.destroyAllWindows()
