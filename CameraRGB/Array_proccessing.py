@@ -208,13 +208,13 @@ def debug():
         if key == ord('q'):
             break
 
-# if __name__ == "__main__":
-#     argument = sys.argv[1]
-#     if argument == "test":
-#         test_Array_processing()
-#     elif argument == "debug":
-#         debug()
-#     else:
-#         print("Invalid argument. Use 'test' or 'debug'.")
+if __name__ == "__main__":
+    argument = sys.argv[1]
+    if argument == "test":
+        test_Array_processing()
+    elif argument == "debug":
+        debug()
+    else:
+        print("Invalid argument. Use 'test' or 'debug'.")
 
-convert_and_save_image()
+# convert_and_save_image()

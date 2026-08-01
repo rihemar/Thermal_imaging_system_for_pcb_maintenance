@@ -22,7 +22,7 @@ import numpy as np
 import argparse
 import json
 import os
-
+from Array_proccessing import convert_and_save_image
 
 class PointPicker:
     """Fenêtre interactive pour cliquer des points sur une image et les enregistrer dans l'ordre."""
@@ -98,7 +98,7 @@ def calibrer_homographie(thermal_path, rgb_path, output_path, min_points=4):
     clic points -> calcul homographie RANSAC -> sauvegarde
     """
     thermal_img = cv2.imread(thermal_path)
-    rgb_img = cv2.imread(rgb_path)
+    rgb_img = rgb_path
 
     if thermal_img is None:
         raise FileNotFoundError(f"Image thermique introuvable : {thermal_path}")
@@ -164,12 +164,32 @@ def calibrer_homographie(thermal_path, rgb_path, output_path, min_points=4):
     return H
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Etape 1 - Calibrage homographie thermique <-> RGB")
-    parser.add_argument("--thermal", required=True, help="Chemin vers l'image thermique")
-    parser.add_argument("--rgb", required=True, help="Chemin vers l'image RGB")
-    parser.add_argument("--out", default="homography.npy", help="Fichier de sortie pour la matrice H")
-    parser.add_argument("--min-points", type=int, default=4, help="Nombre minimum de points (defaut: 4)")
-    args = parser.parse_args()
+def calibrer_par_defaut():
+    url = "http://192.168.1.19:81/stream"
 
-    calibrer_homographie(args.thermal, args.rgb, args.out, args.min_points)
+    cap = cv2.VideoCapture(url)
+    if not cap.isOpened():
+        print("Could not connect to IP Webcam")
+        exit()
+    ret , frame = cap.read()
+    if not ret:
+        print("Failed to grab frame")
+        return 
+    convert_and_save_image()  # Assurez-vous que CameraArray.txt est présent et correct
+    calibrer_homographie(
+        thermal_path="./data/thermal_default.jpg",
+        rgb_path=frame,
+        output_path="./data/homography_default.npy",
+        min_points=4
+    )
+
+if __name__ == "__main__":
+    # parser = argparse.ArgumentParser(description="Etape 1 - Calibrage homographie thermique <-> RGB")
+    # parser.add_argument("--thermal", required=True, help="Chemin vers l'image thermique")
+    # parser.add_argument("--rgb", required=True, help="Chemin vers l'image RGB")
+    # parser.add_argument("--out", default="homography.npy", help="Fichier de sortie pour la matrice H")
+    # parser.add_argument("--min-points", type=int, default=4, help="Nombre minimum de points (defaut: 4)")
+    # args = parser.parse_args()
+
+    # calibrer_homographie(args.thermal, args.rgb, args.out, args.min_points)
+    calibrer_par_defaut()
