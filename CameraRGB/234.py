@@ -28,6 +28,8 @@ Utilisation typique :
         --h1 homography.npy --out resultat_overlay.jpg
 """
 
+import time
+
 import cv2
 import numpy as np
 import argparse
@@ -375,7 +377,7 @@ if __name__ == "__main__":
         if not ret:
             print("Failed to grab frame")
             break 
-        run_pipeline(
+        out , (xi , xj)=run_pipeline(
             thermal_path=args.thermal,
             rgb_path=frame,
             blueprint_path=args.blueprint,
@@ -386,3 +388,8 @@ if __name__ == "__main__":
             manual_blueprint_corners=args.manual_blueprint_corners,
             manual_rgb_corners=args.manual_rgb_corners,
         )
+        cv2.imshow("Resultat Overlay", out)
+        cv2.drawMarker(out, (int(xi), int(xj)), (0, 255, 0), cv2.MARKER_CROSS, markerSize=20, thickness=2)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+        time.sleep(0.5)  # Attendre 1 seconde avant de capturer la prochaine image
