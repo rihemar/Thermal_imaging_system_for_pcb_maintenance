@@ -313,6 +313,7 @@ def run_pipeline(thermal_path, rgb_path, blueprint_path, h1_path, out_path,
     thermal_gray = cv2.cvtColor(thermal_img, cv2.COLOR_BGR2GRAY) if len(thermal_img.shape) == 3 else thermal_img
     thermal_1 =cv2.warpPerspective(thermal_gray, H1, (rw, rh))
     cv2.imshow("Thermal warped to RGB", thermal_1)
+
     thermal_warped = cv2.warpPerspective(thermal_gray, H_total, (bw, bh))
 
     rgb_warped = cv2.warpPerspective(rgb_img, H2, (bw, bh))  # RGB projete dans le repere blueprint
@@ -370,29 +371,25 @@ if __name__ == "__main__":
                          help="Force la selection manuelle des coins PCB sur le blueprint")
     args = parser.parse_args()
 
-    while True:
-        url = "http://192.168.1.19:81/stream"
-        cap = cv2.VideoCapture(url)
-        if not cap.isOpened():
-            print("Could not connect to IP Webcam")
-            exit()
-        ret , frame = cap.read()
-        if not ret:
-            print("Failed to grab frame")
-            break 
-        out , (xi , xj)=run_pipeline(
-            thermal_path=args.thermal,
-            rgb_path=frame,
-            blueprint_path=args.blueprint,
-            h1_path=args.h1,
-            out_path=args.out,
-            debug_dir=args.debug_dir,
-            alpha=args.alpha,
-            manual_blueprint_corners=args.manual_blueprint_corners,
-            manual_rgb_corners=args.manual_rgb_corners,
-        )
-        cv2.imshow("Resultat Overlay", out)
-        cv2.drawMarker(out, (int(xi), int(xj)), (0, 255, 0), cv2.MARKER_CROSS, markerSize=20, thickness=2)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-        time.sleep(0.5)  # Attendre 1 seconde avant de capturer la prochaine image
+    url = "http://192.168.1.19:81/stream"
+    cap = cv2.VideoCapture(url)
+    if not cap.isOpened():
+        print("Could not connect to IP Webcam")
+        exit()
+    ret , frame = cap.read()
+    if not ret:
+        print("Failed to grab frame") 
+    out , (xi , xj)=run_pipeline(
+        thermal_path=args.thermal,
+        rgb_path=frame,
+        blueprint_path=args.blueprint,
+        h1_path=args.h1,
+        out_path=args.out,
+        debug_dir=args.debug_dir,
+        alpha=args.alpha,
+        manual_blueprint_corners=args.manual_blueprint_corners,
+        manual_rgb_corners=args.manual_rgb_corners,
+    )
+    cv2.imshow("Resultat Overlay", out)
+    cv2.drawMarker(out, (int(xi), int(xj)), (0, 255, 0), cv2.MARKER_CROSS, markerSize=20, thickness=2)
+    time.sleep(0.5)  # Attendre 1 seconde avant de capturer la prochaine image
