@@ -8,13 +8,17 @@ avec le module standard "tkinter" et casse tous les imports (ImportError
 circulaire). Gardez le nom "app_menu_tkinter.py" ou equivalent.
 
 Boutons :
-  1. Calibration (Etape 1)              -> lance etape1_calibrage_homographie.py
-  2. Detection + Overlay (Etape 2/3/4)  -> lance etape2_3_4_alignement_overlay.py,
+  1. Calibration (Etape 1)              -> lance CameraRGB/calibrage_homographie.py
+  2. Detection + Overlay (Etape 2/3/4)  -> lance CameraRGB/alignement_overlay.py,
                                             puis affiche le resultat en PLEIN ECRAN
   3. Heatmap brute (sans alteration)    -> affiche ./data/CameraArrayScaled.txt tel quel,
                                             en PLEIN ECRAN
 
-Au demarrage : execute STARTUP_BASH_COMMAND en arriere-plan (non bloquant).
+Au demarrage : execute STARTUP_BASH_COMMAND en arriere-plan, comme un process
+PERSISTANT (pas juste une commande ponctuelle) -- il est tue proprement (lui
+et tous ses sous-process) quand l'application se ferme, quelle que soit la
+maniere dont elle se ferme (bouton X, ECHAP, ou fermeture du gestionnaire de
+fenetres).
 
 Dependances :
     pip install opencv-python numpy matplotlib pillow
@@ -24,6 +28,7 @@ import tkinter as tk
 from tkinter import messagebox
 import subprocess
 import threading
+import signal
 import os
 import sys
 
@@ -43,7 +48,7 @@ from PIL import Image, ImageTk
 STARTUP_BASH_COMMAND = "./CameraThermique/examples/build/GUI "   # <-- REMPLACEZ PAR VOTRE VRAIE COMMANDE
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-CALIBRATION_SCRIPT = os.path.join(SCRIPT_DIR,"CameraRGB", "calibrage_homographie.py")
+CALIBRATION_SCRIPT = os.path.join(SCRIPT_DIR, "CameraRGB", "calibrage_homographie.py")
 MAIN_SCRIPT = os.path.join(SCRIPT_DIR, "CameraRGB", "alignement_overlay.py")
 
 DEFAULT_THERMAL_MATRIX = "./data/CameraArrayScaled.txt"
@@ -122,6 +127,9 @@ class App(tk.Tk):
         self.attributes("-fullscreen", True)
         self.bind("<F11>", lambda e: self._toggle_fullscreen())
         self.bind("<Escape>", lambda e: self._confirm_quit())
+        self.protocol("WM_DELETE_WINDOW", self._confirm_quit)  # bouton X du gestionnaire de fenetres
+
+        self.startup_process = None  # handle du process lance au demarrage (voir _run_startup_command)
 
         self._log_expanded = False
         self._build_ui()
@@ -133,7 +141,26 @@ class App(tk.Tk):
 
     def _confirm_quit(self):
         if messagebox.askyesno("Quitter", "Fermer l'application ?"):
+            self._kill_startup_process()
             self.destroy()
+
+    def _kill_startup_process(self):
+        """Tue le process de demarrage (et tous ses sous-process) avant de fermer l'app."""
+        proc = self.startup_process
+        if proc is None or proc.poll() is not None:
+            return  # deja termine ou jamais lance
+        self.log("[Startup] Arret du process de demarrage...")
+        try:
+            # Tue tout le groupe de process (utile si STARTUP_BASH_COMMAND lance
+            # lui-meme des sous-process via shell=True).
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass  # deja mort
+        except Exception as e:
+            self.log(f"[Startup] Erreur en tuant le process : {e}", level="err")
 
     # ------------------------------------------------------------------
     # Interface
@@ -210,21 +237,31 @@ class App(tk.Tk):
         self.after(0, _write)
 
     # ------------------------------------------------------------------
-    # Commande bash au demarrage
+    # Commande bash au demarrage (process PERSISTANT, tue a la fermeture de l'app)
     # ------------------------------------------------------------------
     def _run_startup_command(self):
         def task():
-            self.log(f"[Startup] Execution : {STARTUP_BASH_COMMAND}")
+            self.log(f"[Startup] Lancement : {STARTUP_BASH_COMMAND}")
             try:
-                result = subprocess.run(
-                    STARTUP_BASH_COMMAND, shell=True, capture_output=True, text=True, timeout=30
+                # start_new_session=True : cree un nouveau groupe de process, pour
+                # pouvoir tuer la commande ET tous ses enfants proprement a la fermeture.
+                proc = subprocess.Popen(
+                    STARTUP_BASH_COMMAND, shell=True,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+                    start_new_session=True
                 )
-                if result.stdout.strip():
-                    self.log(result.stdout.strip())
-                if result.stderr.strip():
-                    self.log(f"[stderr] {result.stderr.strip()}", level="err")
-                self.log(f"[Startup] Termine (code {result.returncode})",
-                          level="ok" if result.returncode == 0 else "err")
+                self.startup_process = proc
+                self.log(f"[Startup] Process lance (PID {proc.pid}).", level="ok")
+
+                # Log en continu tant que le process tourne. La boucle s'arrete
+                # d'elle-meme quand le process se termine ou est tue a la fermeture.
+                for line in proc.stdout:
+                    self.log(f"[Startup] {line.rstrip()}")
+
+                code = proc.wait()
+                if self.startup_process is proc:  # pas deja remplace/tue entre-temps
+                    self.log(f"[Startup] Process de demarrage termine (code {code}).",
+                              level="ok" if code == 0 else "err")
             except Exception as e:
                 self.log(f"[Startup] Erreur : {e}", level="err")
 
