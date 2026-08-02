@@ -315,20 +315,22 @@ def grab_rgb_frame():
 
 def _grab_focus(win):
     """Force une fenetre Toplevel a passer au premier plan ET recevoir le focus clavier.
-    Détourne également tous les événements de clic/focus vers cette fenêtre (modal)."""
+    Détourne également tous les événements de clic/focus vers cette fenêtre (modal).
+    Force la fenêtre au premier plan absolu (topmost) pour éviter qu'elle soit cachée par le menu."""
     win.lift()
     win.focus_force()
+    win.attributes("-topmost", True)
     try:
         win.grab_set()
     except Exception:
         pass
-    win.after(50, lambda: _apply_grab_secure(win))
+    win.after(100, lambda: _apply_grab_secure(win))
 
 
 def _apply_grab_secure(win):
     if win.winfo_exists():
-        win.lift()
         win.focus_force()
+        win.attributes("-topmost", True)
         try:
             win.grab_set()
         except Exception:
@@ -358,7 +360,7 @@ class SensorThread(threading.Thread):
             try:
                 i2c = busio.I2C(board.SCL, board.SDA, frequency=1_000_000)
                 self._mlx = adafruit_mlx90640.MLX90640(i2c)
-                self._mlx.refresh_rate = adafruit_mlx90640.RefreshRate.REFRESH_1_HZ
+                self._mlx.refresh_rate = adafruit_mlx90640.RefreshRate.REFRESH_2_HZ
                 try:
                     self._mlx.emissivity = 0.95
                 except AttributeError:
@@ -380,7 +382,7 @@ class SensorThread(threading.Thread):
         frame_buf = [0.0] * (SRC_W * SRC_H)
         while self._running:
             if self.simulation:
-                self._sim_t += 1.0
+                self._sim_t += 0.5
                 base = np.full((SRC_H, SRC_W), 24.0, dtype=np.float32)
                 cx = SRC_W / 2 + 6 * np.sin(self._sim_t * 0.3)
                 cy = SRC_H / 2 + 4 * np.cos(self._sim_t * 0.2)
@@ -389,7 +391,7 @@ class SensorThread(threading.Thread):
                 new_raw = base + hotspot
                 with self._lock:
                     self._raw = new_raw.astype(np.float32)
-                time.sleep(1.0)
+                time.sleep(0.5)
             else:
                 try:
                     self._mlx.getFrame(frame_buf)
@@ -399,7 +401,7 @@ class SensorThread(threading.Thread):
                 except Exception as e:
                     # glitch de lecture ou erreur I2C -- on ecrit sur stderr sans crasher le thread
                     print(f"[SensorThread Error] {e}", file=sys.stderr)
-                time.sleep(0.5)
+                time.sleep(0.25)
 
 
 # ============================================================================
@@ -490,7 +492,7 @@ class CalibrationDialog(tk.Toplevel):
     def _validate_thermal(self):
         pts = self.picker.get_points()
         if len(pts) < self.min_points:
-            messagebox.showwarning("Points insuffisants", f"Il faut au moins {self.min_points} points.")
+            messagebox.showwarning("Points insuffisants", f"Il faut au moins {self.min_points} points.", parent=self)
             return
         self.thermal_points = pts
         self._show_step_rgb()
@@ -510,7 +512,8 @@ class CalibrationDialog(tk.Toplevel):
             messagebox.showwarning(
                 "Nombre de points different",
                 f"{len(self.thermal_points)} points thermiques vs {len(pts)} points RGB. "
-                f"Recommencez avec le meme nombre."
+                f"Recommencez avec le meme nombre.",
+                parent=self
             )
             return
 
@@ -519,7 +522,7 @@ class CalibrationDialog(tk.Toplevel):
         H, mask = cv2.findHomography(pts_thermal, pts_rgb, cv2.RANSAC, ransacReprojThreshold=3.0)
 
         if H is None:
-            messagebox.showerror("Echec", "Le calcul de l'homographie a echoue. Reessayez avec d'autres points.")
+            messagebox.showerror("Echec", "Le calcul de l'homographie a echoue. Reessayez avec d'autres points.", parent=self)
             return
 
         inliers = int(mask.sum())
@@ -592,7 +595,7 @@ class FullscreenWindow(tk.Toplevel):
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
-    def show_live_heatmap(self, get_matrix_fn, refresh_ms=1000):
+    def show_live_heatmap(self, get_matrix_fn, refresh_ms=500):
         """
         Heatmap qui se rafraichit en continu tant que la fenetre reste ouverte.
         get_matrix_fn : fonction sans argument retournant la derniere matrice
@@ -622,7 +625,7 @@ class FullscreenWindow(tk.Toplevel):
 
         _update()
 
-    def show_live_detection(self, sensor, rgb_frame, blueprint_img, H1, manual_rgb_corners=None, refresh_ms=1000, alpha=0.5):
+    def show_live_detection(self, sensor, rgb_frame, blueprint_img, H1, manual_rgb_corners=None, refresh_ms=500, alpha=0.5):
         """
         Calcule et affiche l'overlay thermique aligne en temps reel (live).
         Evite de capturer a nouveau le flux RGB ou de refaire la detection de contours a chaque frame (performance).
@@ -890,7 +893,7 @@ class App(tk.Tk):
         win = FullscreenWindow(self, "Resultat - Point chaud detecte (live)")
         try:
             self.log("Initialisation de la detection et overlay live...")
-            win.show_live_detection(self.sensor, rgb_frame, self.blueprint_img, self.H1, refresh_ms=1000)
+            win.show_live_detection(self.sensor, rgb_frame, self.blueprint_img, self.H1, refresh_ms=500)
             self.log("Detection live active.", level="ok")
         except RuntimeError as e:
             win.destroy()
@@ -905,10 +908,10 @@ class App(tk.Tk):
         def on_corners_picked(corners):
             win = FullscreenWindow(self, "Resultat - Point chaud detecte (live, coins manuels)")
             try:
-                win.show_live_detection(self.sensor, rgb_frame, self.blueprint_img, self.H1, manual_rgb_corners=corners, refresh_ms=1000)
+                win.show_live_detection(self.sensor, rgb_frame, self.blueprint_img, self.H1, manual_rgb_corners=corners, refresh_ms=500)
                 self.log("Detection live active (coins manuels).", level="ok")
             except Exception as e:
-                messagebox.showerror("Erreur", str(e))
+                messagebox.showerror("Erreur", str(e), parent=win)
                 win.destroy()
 
         dialog = tk.Toplevel(self)
@@ -926,7 +929,7 @@ class App(tk.Tk):
         def validate():
             pts = picker.get_points()
             if len(pts) != 4:
-                messagebox.showwarning("4 points requis", "Cliquez exactement 4 coins.")
+                messagebox.showwarning("4 points requis", "Cliquez exactement 4 coins.", parent=dialog)
                 return
             dialog.destroy()
             on_corners_picked(pts)
@@ -939,7 +942,7 @@ class App(tk.Tk):
     # ------------------------------------------------------------------
     def show_raw_heatmap(self):
         win = FullscreenWindow(self, "Heatmap brute (live, sans alteration)")
-        win.show_live_heatmap(self.sensor.get_scaled, refresh_ms=1000)
+        win.show_live_heatmap(self.sensor.get_scaled, refresh_ms=500)
         self.log("Heatmap live demarree (rafraichissement continu).", level="ok")
 
 
