@@ -389,7 +389,5 @@ if __name__ == "__main__":
         manual_rgb_corners=args.manual_rgb_corners,
     )
 
-    cv2.imshow("Resultat Overlay", blended)
-    cv2.waitKey(0)
     cap.release()
-    cv2.destroyAllWindows()
+    print(f"[OK] Point chaud a ({xj:.1f}, {yj:.1f}) sur le blueprint. Resultat dans {args.out}.")
