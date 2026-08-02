@@ -71,13 +71,11 @@ COLOR_LOG_TEXT = "#CAFFBF"
 # ============================================================================
 
 class BigButton(tk.Frame):
-    def __init__(self, master, emoji, title, subtitle, bg, command, **kwargs):
+    def __init__(self, master, title, subtitle, bg, command, **kwargs):
         super().__init__(master, bg=bg, cursor="hand2", **kwargs)
         self.bg = bg
         self.command = command
 
-        self.emoji_lbl = tk.Label(self, text=emoji, font=("Arial", 48), bg=bg)
-        self.emoji_lbl.pack(pady=(20, 5))
 
         self.title_lbl = tk.Label(self, text=title, font=("Arial", 22, "bold"),
                                    bg=bg, fg=COLOR_BTN_TEXT)
@@ -87,19 +85,19 @@ class BigButton(tk.Frame):
                                       bg=bg, fg=COLOR_BTN_TEXT, wraplength=260, justify="center")
         self.subtitle_lbl.pack(pady=(2, 20))
 
-        for widget in (self, self.emoji_lbl, self.title_lbl, self.subtitle_lbl):
+        for widget in (self, self.title_lbl, self.subtitle_lbl):
             widget.bind("<Button-1>", lambda e: self.command())
             widget.bind("<Enter>", self._on_enter)
             widget.bind("<Leave>", self._on_leave)
 
     def _on_enter(self, event):
         self.configure(bg=self._lighten(self.bg))
-        for w in (self.emoji_lbl, self.title_lbl, self.subtitle_lbl):
+        for w in ( self.title_lbl, self.subtitle_lbl):
             w.configure(bg=self._lighten(self.bg))
 
     def _on_leave(self, event):
         self.configure(bg=self.bg)
-        for w in (self.emoji_lbl, self.title_lbl, self.subtitle_lbl):
+        for w in ( self.title_lbl, self.subtitle_lbl):
             w.configure(bg=self.bg)
 
     @staticmethod
