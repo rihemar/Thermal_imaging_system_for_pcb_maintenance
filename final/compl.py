@@ -270,7 +270,7 @@ def list_blueprint_files():
     """Scanne BLUEPRINT_DIR et retourne la liste triee des fichiers .jpg trouves."""
     if not os.path.isdir(BLUEPRINT_DIR):
         return []
-    patterns = ("*.jpg", "*.jpeg", "*.JPG", "*.JPEG")
+    patterns = ("*.jpg","*.png", "*.jpeg", "*.JPG", "*.JPEG")
     files = set()
     for pat in patterns:
         files.update(glob.glob(os.path.join(BLUEPRINT_DIR, pat)))
