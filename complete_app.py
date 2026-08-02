@@ -315,11 +315,24 @@ def grab_rgb_frame():
 
 def _grab_focus(win):
     """Force une fenetre Toplevel a passer au premier plan ET recevoir le focus clavier.
-    Necessaire sur certains gestionnaires de fenetres X11 qui n'accordent pas le
-    focus automatiquement a une fenetre nouvellement mappee, meme en plein ecran."""
+    Détourne également tous les événements de clic/focus vers cette fenêtre (modal)."""
     win.lift()
     win.focus_force()
-    win.after(50, lambda: (win.lift(), win.focus_force()))
+    try:
+        win.grab_set()
+    except Exception:
+        pass
+    win.after(50, lambda: _apply_grab_secure(win))
+
+
+def _apply_grab_secure(win):
+    if win.winfo_exists():
+        win.lift()
+        win.focus_force()
+        try:
+            win.grab_set()
+        except Exception:
+            pass
 
 
 # ============================================================================
