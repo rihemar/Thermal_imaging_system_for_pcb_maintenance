@@ -37,6 +37,20 @@ import json
 import os
 
 
+class NumpyEncoder(json.JSONEncoder):
+    """Encodeur JSON tolerant aux types numpy (ndarray, float32, int64, etc.)"""
+ 
+    def default(self, obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        return json.JSONEncoder.default(self, obj)
+ 
+ 
+
 # ----------------------------------------------------------------------------
 # Utilitaires generaux
 # ----------------------------------------------------------------------------
@@ -311,9 +325,10 @@ def run_pipeline(thermal_path, rgb_img, blueprint_path, h1_path, out_path,
     # ---------------- BONUS : overlay component-aware ----------------
     SENTINEL = -9999.0
     temp_warped = cv2.warpPerspective(temp_matrix, H_total, (bw, bh), flags=cv2.INTER_LINEAR, borderValue=SENTINEL)
-    valid_mask = (temp_warped > SENTINEL + 1).astype(np.uint8) * 255
+    coverage = np.full(temp_matrix.shape, 255, dtype=np.uint8)
+    coverage_warped = cv2.warpPerspective(coverage, H_total, (bw, bh), flags=cv2.INTER_NEAREST, borderValue=0)
+    valid_mask = (coverage_warped > 200).astype(np.uint8) * 255   
     valid_mask_3c = cv2.merge([valid_mask] * 3)
-
     rgb_warped = cv2.warpPerspective(rgb_img, H2, (bw, bh))
 
     component_contours = detect_component_contours(
