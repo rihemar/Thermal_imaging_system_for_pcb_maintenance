@@ -25,9 +25,12 @@ AUCUN fichier intermediaire n'est lu ou ecrit : la matrice thermique, l'image
 RGB, l'homographie et le resultat final restent des objets Python/numpy en
 memoire, passes directement entre les fonctions.
 
-Seule exception assumee : le blueprint (schema du PCB) est lu une fois depuis
-le disque au demarrage -- c'est un vrai fichier d'entree externe, pas un
-fichier intermediaire genere par le pipeline.
+Seule exception assumee : les blueprints (schemas du PCB, un ou plusieurs
+fichiers .jpg dans le dossier BLUEPRINT_DIR) sont lus depuis le disque --
+ce sont de vrais fichiers d'entree externes, pas des fichiers intermediaires
+generes par le pipeline. Au lancement de la Detection (option 2), l'appli
+scanne BLUEPRINT_DIR/*.jpg et affiche un bouton par fichier trouve pour
+choisir sur quel blueprint aligner la heatmap.
 
 Dependances :
     pip install opencv-python numpy pillow matplotlib
@@ -40,6 +43,7 @@ module standard).
 import os
 import sys
 import time
+import glob
 import threading
 
 import numpy as np
@@ -67,7 +71,7 @@ except (ImportError, NotImplementedError):
 # ============================================================================
 
 RGB_STREAM_URL = "http://192.168.1.19:81/stream"   # capture RGB -- inchangee
-BLUEPRINT_PATH = "./data/blueprint.png"             # seul fichier reellement lu depuis le disque
+BLUEPRINT_DIR = "./blueprints"                      # dossier contenant les blueprints .jpg (seuls fichiers reellement lus depuis le disque)
 
 SRC_W, SRC_H = 32, 24          # resolution native MLX90640
 UPSCALE = 3
@@ -260,6 +264,17 @@ def grab_rgb_frame():
     if not ret:
         raise RuntimeError("Echec de capture d'une frame RGB.")
     return frame
+
+
+def list_blueprint_files():
+    """Scanne BLUEPRINT_DIR et retourne la liste triee des fichiers .jpg trouves."""
+    if not os.path.isdir(BLUEPRINT_DIR):
+        return []
+    patterns = ("*.jpg", "*.jpeg", "*.JPG", "*.JPEG")
+    files = set()
+    for pat in patterns:
+        files.update(glob.glob(os.path.join(BLUEPRINT_DIR, pat)))
+    return sorted(files)
 
 
 def make_header(parent, text, back_command, back_text="Retour au menu", back_bg="#A0C4FF"):
@@ -460,9 +475,114 @@ class MenuView(tk.Frame):
         if self.app.H1 is None:
             messagebox.showwarning("Calibrage requis", "Lancez d'abord la Calibration.", parent=self.app)
             return
-        if self.app.blueprint_img is None:
-            messagebox.showerror("Blueprint manquant", f"Impossible de charger {BLUEPRINT_PATH}.", parent=self.app)
+        if not list_blueprint_files():
+            messagebox.showerror("Aucun blueprint",
+                                  f"Aucun fichier .jpg trouve dans {BLUEPRINT_DIR}/.\n"
+                                  f"Ajoutez au moins un blueprint puis reessayez.",
+                                  parent=self.app)
             return
+        self.app.show_view(BlueprintPickerView)
+
+
+# ============================================================================
+# VUE : Choix du blueprint (un bouton par fichier .jpg dans BLUEPRINT_DIR)
+# ============================================================================
+
+class BlueprintButton(tk.Frame):
+    """Bouton 'cute' affichant une miniature + le nom de fichier, meme esprit que BigButton."""
+
+    def __init__(self, master, photo, filename, command, **kwargs):
+        super().__init__(master, bg="white", cursor="hand2",
+                          highlightthickness=1, highlightbackground="#DADADA", **kwargs)
+        self.command = command
+        self.photo = photo  # garder une reference, sinon le GC la recupere
+        self.img_lbl = tk.Label(self, image=photo, bg="white")
+        self.img_lbl.pack(padx=10, pady=(10, 6))
+        self.name_lbl = tk.Label(self, text=filename, font=("Arial", 11, "bold"), bg="white",
+                                  fg=COLOR_BTN_TEXT, wraplength=170, justify="center")
+        self.name_lbl.pack(padx=10, pady=(0, 10))
+        for w in (self, self.img_lbl, self.name_lbl):
+            w.bind("<Button-1>", lambda e: self.command())
+            w.bind("<Enter>", lambda e: self._set_bg("#F0F4FF"))
+            w.bind("<Leave>", lambda e: self._set_bg("white"))
+
+    def _set_bg(self, color):
+        self.configure(bg=color)
+        self.img_lbl.configure(bg=color)
+        self.name_lbl.configure(bg=color)
+
+
+class BlueprintPickerView(tk.Frame):
+    """Scanne BLUEPRINT_DIR/*.jpg et affiche un bouton (miniature + nom) par fichier.
+    Cliquer un bouton charge ce blueprint puis enchaine directement sur la Detection."""
+
+    def __init__(self, master, app):
+        super().__init__(master, bg=COLOR_BG)
+        self.app = app
+        self._photos = []  # references gardees pour eviter le garbage collection
+
+        make_header(self, "Choisissez un blueprint (.jpg)",
+                    lambda: app.show_view(MenuView), "Annuler", "#E74C3C")
+
+        files = list_blueprint_files()
+        if not files:
+            tk.Label(self, text=f"Aucun fichier .jpg trouve dans {BLUEPRINT_DIR}/",
+                     font=("Arial", 14), bg=COLOR_BG, fg=COLOR_STATUS_ERR).pack(expand=True)
+            return
+
+        app.log(f"{len(files)} blueprint(s) trouve(s) dans {BLUEPRINT_DIR}/")
+
+        # Zone scrollable (grille de boutons) au cas ou il y a beaucoup de fichiers
+        outer = tk.Frame(self, bg=COLOR_BG)
+        outer.pack(fill="both", expand=True, padx=20, pady=20)
+        canvas = tk.Canvas(outer, bg=COLOR_BG, highlightthickness=0)
+        scrollbar = tk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        grid_frame = tk.Frame(canvas, bg=COLOR_BG)
+
+        grid_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=grid_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        def _on_mousewheel(event):
+            delta = event.delta if event.delta else (120 if getattr(event, "num", None) == 4 else -120)
+            canvas.yview_scroll(int(-1 * (delta / 120)), "units")
+
+        canvas.bind("<MouseWheel>", _on_mousewheel)     # Windows / macOS
+        canvas.bind("<Button-4>", _on_mousewheel)        # Linux molette haut
+        canvas.bind("<Button-5>", _on_mousewheel)        # Linux molette bas
+
+        cols = 4
+        for i, path in enumerate(files):
+            thumb = self._make_thumbnail(path)
+            if thumb is None:
+                continue
+            self._photos.append(thumb)
+            filename = os.path.basename(path)
+            btn = BlueprintButton(grid_frame, thumb, filename, command=lambda p=path: self._select(p))
+            r, c = divmod(len(self._photos) - 1, cols)
+            btn.grid(row=r, column=c, padx=10, pady=10, sticky="nsew")
+
+    def _make_thumbnail(self, path, max_w=160, max_h=120):
+        img = cv2.imread(path)
+        if img is None:
+            self.app.log(f"!! Impossible de lire {path}", level="err")
+            return None
+        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        h, w = rgb.shape[:2]
+        scale = min(max_w / w, max_h / h)
+        resized = cv2.resize(rgb, (max(1, int(w * scale)), max(1, int(h * scale))))
+        return ImageTk.PhotoImage(image=Image.fromarray(resized))
+
+    def _select(self, path):
+        img = cv2.imread(path)
+        if img is None:
+            messagebox.showerror("Erreur", f"Impossible de charger {path}", parent=self.app)
+            return
+        self.app.blueprint_img = img
+        self.app.blueprint_path = path
+        self.app.log(f"Blueprint selectionne : {os.path.basename(path)}", level="ok")
         self.app.show_view(DetectionView)
 
 
@@ -770,7 +890,8 @@ class App(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._confirm_quit)
 
         self.H1 = None  # homographie thermique -> RGB, calculee par le calibrage (en memoire)
-        self.blueprint_img = None
+        self.blueprint_img = None   # choisi via BlueprintPickerView au moment de la Detection
+        self.blueprint_path = None
         self.current_view = None
 
         self.sensor = SensorThread()
@@ -778,7 +899,12 @@ class App(tk.Tk):
 
         self._log_expanded = False
         self._build_shell()
-        self._load_blueprint()
+
+        n_blueprints = len(list_blueprint_files())
+        if n_blueprints > 0:
+            self.log(f"{n_blueprints} blueprint(s) .jpg trouve(s) dans {BLUEPRINT_DIR}/", level="ok")
+        else:
+            self.log(f"!! Aucun blueprint .jpg trouve dans {BLUEPRINT_DIR}/", level="err")
 
         if self.sensor.simulation:
             self.log("Capteur MLX90640 non detecte -- MODE SIMULATION active.", level="err")
@@ -812,13 +938,6 @@ class App(tk.Tk):
         if messagebox.askyesno("Quitter", "Fermer l'application ?", parent=self):
             self.sensor.stop()
             self.destroy()
-
-    def _load_blueprint(self):
-        if os.path.exists(BLUEPRINT_PATH):
-            self.blueprint_img = cv2.imread(BLUEPRINT_PATH)
-            self.log(f"Blueprint charge : {BLUEPRINT_PATH}", level="ok")
-        else:
-            self.log(f"!! Blueprint introuvable : {BLUEPRINT_PATH}", level="err")
 
     # ------------------------------------------------------------------
     # Coquille persistante : conteneur de vues + barre de statut/logs
