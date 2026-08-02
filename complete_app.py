@@ -345,7 +345,7 @@ class SensorThread(threading.Thread):
             try:
                 i2c = busio.I2C(board.SCL, board.SDA, frequency=1_000_000)
                 self._mlx = adafruit_mlx90640.MLX90640(i2c)
-                self._mlx.refresh_rate = adafruit_mlx90640.RefreshRate.REFRESH_2_HZ
+                self._mlx.refresh_rate = adafruit_mlx90640.RefreshRate.REFRESH_1_HZ
                 try:
                     self._mlx.emissivity = 0.95
                 except AttributeError:
@@ -367,7 +367,7 @@ class SensorThread(threading.Thread):
         frame_buf = [0.0] * (SRC_W * SRC_H)
         while self._running:
             if self.simulation:
-                self._sim_t += 0.3
+                self._sim_t += 1.0
                 base = np.full((SRC_H, SRC_W), 24.0, dtype=np.float32)
                 cx = SRC_W / 2 + 6 * np.sin(self._sim_t * 0.3)
                 cy = SRC_H / 2 + 4 * np.cos(self._sim_t * 0.2)
@@ -376,16 +376,17 @@ class SensorThread(threading.Thread):
                 new_raw = base + hotspot
                 with self._lock:
                     self._raw = new_raw.astype(np.float32)
-                time.sleep(0.3)
+                time.sleep(1.0)
             else:
                 try:
                     self._mlx.getFrame(frame_buf)
                     raw = np.array(frame_buf, dtype=np.float32).reshape(SRC_H, SRC_W)[::-1, :]
                     with self._lock:
                         self._raw = raw
-                except ValueError:
-                    pass  # glitch de lecture occasionnel -- on reessaie a la prochaine iteration
-                time.sleep(0.05)
+                except Exception as e:
+                    # glitch de lecture ou erreur I2C -- on ecrit sur stderr sans crasher le thread
+                    print(f"[SensorThread Error] {e}", file=sys.stderr)
+                time.sleep(0.5)
 
 
 # ============================================================================
@@ -578,7 +579,7 @@ class FullscreenWindow(tk.Toplevel):
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
-    def show_live_heatmap(self, get_matrix_fn, refresh_ms=300):
+    def show_live_heatmap(self, get_matrix_fn, refresh_ms=1000):
         """
         Heatmap qui se rafraichit en continu tant que la fenetre reste ouverte.
         get_matrix_fn : fonction sans argument retournant la derniere matrice
@@ -604,6 +605,89 @@ class FullscreenWindow(tk.Toplevel):
             im.set_clim(vmin=float(matrix.min()), vmax=float(matrix.max()))
             title.set_text(f"Temperatures brutes (live)  |  min={matrix.min():.1f}C   max={matrix.max():.1f}C")
             canvas.draw_idle()
+            self._live_job = self.after(refresh_ms, _update)
+
+        _update()
+
+    def show_live_detection(self, sensor, rgb_frame, blueprint_img, H1, manual_rgb_corners=None, refresh_ms=1000, alpha=0.5):
+        """
+        Calcule et affiche l'overlay thermique aligne en temps reel (live).
+        Evite de capturer a nouveau le flux RGB ou de refaire la detection de contours a chaque frame (performance).
+        """
+        bh, bw = blueprint_img.shape[:2]
+
+        if manual_rgb_corners is not None:
+            rgb_corners = np.array(manual_rgb_corners, dtype=np.float32)
+        else:
+            rgb_corners = detect_pcb_corners(rgb_frame)
+            if rgb_corners is None:
+                raise RuntimeError("Detection automatique des coins PCB (RGB) echouee -- coins manuels requis.")
+
+        blueprint_corners = np.array([[0, 0], [bw - 1, 0], [bw - 1, bh - 1], [0, bh - 1]], dtype=np.float32)
+        H2 = compute_alignment_homography(rgb_corners, blueprint_corners)
+        H_total = H2 @ H1
+
+        # Generer le masque valide et les contours
+        temp_matrix = sensor.get_scaled()
+        coverage = np.full(temp_matrix.shape, 255, dtype=np.uint8)
+        coverage_warped = cv2.warpPerspective(coverage, H_total, (bw, bh), flags=cv2.INTER_NEAREST, borderValue=0)
+        valid_mask = (coverage_warped > 200).astype(np.uint8) * 255
+        valid_mask_3c = cv2.merge([valid_mask] * 3)
+
+        rgb_warped = cv2.warpPerspective(rgb_frame, H2, (bw, bh))
+        component_contours = detect_component_contours(rgb_warped)
+
+        img_label = tk.Label(self.content, bg="black")
+        img_label.pack(fill="both", expand=True)
+
+        self.last_blended = None
+
+        def render(event=None):
+            if self.last_blended is None:
+                return
+            fw, fh = self.content.winfo_width(), self.content.winfo_height()
+            if fw < 10 or fh < 10:
+                return
+            h, w = self.last_blended.shape[:2]
+            scale = min(fw / w, fh / h)
+            resized = cv2.resize(self.last_blended, (max(1, int(w * scale)), max(1, int(h * scale))))
+            photo = ImageTk.PhotoImage(image=Image.fromarray(resized))
+            img_label.configure(image=photo)
+            img_label.image = photo
+
+        self.content.bind("<Configure>", render)
+
+        SENTINEL = -9999.0
+
+        def _update():
+            if not self.winfo_exists():
+                return
+            
+            temp_matrix = sensor.get_scaled()
+            xt, yt, hotspot_temp = find_hotspot(temp_matrix)
+            xj, yj = project_point(xt, yt, H_total)
+
+            temp_warped = cv2.warpPerspective(temp_matrix, H_total, (bw, bh), flags=cv2.INTER_LINEAR, borderValue=SENTINEL)
+            
+            try:
+                overlay_colorized, vmin_c, vmax_c, pct_blocks = build_component_aware_overlay(
+                    temp_warped, valid_mask, component_contours
+                )
+            except Exception as e:
+                print(f"[LiveDetection Error] {e}", file=sys.stderr)
+                self._live_job = self.after(refresh_ms, _update)
+                return
+
+            blend_zone = cv2.addWeighted(blueprint_img, 1 - alpha, overlay_colorized, alpha, 0)
+            blended = np.where(valid_mask_3c > 0, blend_zone, blueprint_img)
+
+            cv2.drawMarker(blended, (int(xj), int(yj)), (0, 0, 255), cv2.MARKER_CROSS, markerSize=30, thickness=3)
+            cv2.circle(blended, (int(xj), int(yj)), 18, (0, 0, 255), 2)
+            cv2.putText(blended, f"{hotspot_temp:.1f}C", (int(xj) + 22, int(yj) - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+            self.last_blended = cv2.cvtColor(blended, cv2.COLOR_BGR2RGB)
+            render()
             self._live_job = self.after(refresh_ms, _update)
 
         _update()
@@ -790,41 +874,29 @@ class App(tk.Tk):
             messagebox.showerror("Erreur camera", str(e))
             return
 
-        temp_matrix = self.sensor.get_scaled()
-
+        win = FullscreenWindow(self, "Resultat - Point chaud detecte (live)")
         try:
-            self.log("Calcul de l'alignement et de l'overlay...")
-            blended, hotspot_temp, (xj, yj), infos = run_detection_pipeline(
-                temp_matrix, rgb_frame, self.blueprint_img, self.H1
-            )
+            self.log("Initialisation de la detection et overlay live...")
+            win.show_live_detection(self.sensor, rgb_frame, self.blueprint_img, self.H1, refresh_ms=1000)
+            self.log("Detection live active.", level="ok")
         except RuntimeError as e:
-            # Detection automatique des coins RGB echouee -> selection manuelle
+            win.destroy()
             self.log(f"{e} Basculement en selection manuelle des coins.", level="err")
-            self._run_detection_manual_corners(temp_matrix, rgb_frame)
-            return
+            self._run_detection_manual_corners(rgb_frame)
         except Exception as e:
+            win.destroy()
             messagebox.showerror("Erreur", str(e))
             self.log(f"Erreur detection : {e}", level="err")
-            return
 
-        self.log(f"Point chaud : {hotspot_temp:.1f}C -> blueprint ({xj:.0f},{yj:.0f}). "
-                  f"{infos['pct_blocks_uniformes']:.1f}% en blocs composants.", level="ok")
-
-        win = FullscreenWindow(self, "Resultat - Point chaud detecte")
-        win.show_bgr_image(blended)
-
-    def _run_detection_manual_corners(self, temp_matrix, rgb_frame):
+    def _run_detection_manual_corners(self, rgb_frame):
         def on_corners_picked(corners):
+            win = FullscreenWindow(self, "Resultat - Point chaud detecte (live, coins manuels)")
             try:
-                blended, hotspot_temp, (xj, yj), infos = run_detection_pipeline(
-                    temp_matrix, rgb_frame, self.blueprint_img, self.H1, manual_rgb_corners=corners
-                )
+                win.show_live_detection(self.sensor, rgb_frame, self.blueprint_img, self.H1, manual_rgb_corners=corners, refresh_ms=1000)
+                self.log("Detection live active (coins manuels).", level="ok")
             except Exception as e:
                 messagebox.showerror("Erreur", str(e))
-                return
-            self.log(f"Point chaud : {hotspot_temp:.1f}C (coins manuels).", level="ok")
-            win = FullscreenWindow(self, "Resultat - Point chaud detecte")
-            win.show_bgr_image(blended)
+                win.destroy()
 
         dialog = tk.Toplevel(self)
         dialog.title("Coins du PCB (manuel)")
@@ -854,7 +926,7 @@ class App(tk.Tk):
     # ------------------------------------------------------------------
     def show_raw_heatmap(self):
         win = FullscreenWindow(self, "Heatmap brute (live, sans alteration)")
-        win.show_live_heatmap(self.sensor.get_scaled, refresh_ms=300)
+        win.show_live_heatmap(self.sensor.get_scaled, refresh_ms=1000)
         self.log("Heatmap live demarree (rafraichissement continu).", level="ok")
 
 
