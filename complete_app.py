@@ -313,6 +313,15 @@ def grab_rgb_frame():
     return frame
 
 
+def _grab_focus(win):
+    """Force une fenetre Toplevel a passer au premier plan ET recevoir le focus clavier.
+    Necessaire sur certains gestionnaires de fenetres X11 qui n'accordent pas le
+    focus automatiquement a une fenetre nouvellement mappee, meme en plein ecran."""
+    win.lift()
+    win.focus_force()
+    win.after(50, lambda: (win.lift(), win.focus_force()))
+
+
 # ============================================================================
 # THREAD CAPTEUR (remplace l'executable C++ separe)
 # ============================================================================
@@ -443,6 +452,7 @@ class CalibrationDialog(tk.Toplevel):
         self.rgb_bgr = rgb_bgr
         self.thermal_points = None
         self.bind("<Escape>", lambda e: self.destroy())
+        _grab_focus(self)
 
         self._show_step_thermal()
 
@@ -519,6 +529,9 @@ class FullscreenWindow(tk.Toplevel):
         self.attributes("-fullscreen", True)
         self.configure(bg="black")
         self.bind("<Escape>", lambda e: self.destroy())
+        self._live_job = None
+        self.bind("<Destroy>", self._on_destroy)
+        _grab_focus(self)
 
         top_bar = tk.Frame(self, bg=COLOR_HEADER, height=60)
         top_bar.pack(fill="x", side="top")
@@ -529,6 +542,11 @@ class FullscreenWindow(tk.Toplevel):
 
         self.content = tk.Frame(self, bg="black")
         self.content.pack(fill="both", expand=True)
+
+    def _on_destroy(self, event):
+        # Stoppe la boucle de rafraichissement live si la fenetre est fermee
+        if event.widget is self:
+            self._live_job = None
 
     def show_bgr_image(self, bgr_image):
         rgb = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
@@ -550,6 +568,7 @@ class FullscreenWindow(tk.Toplevel):
         self.after(100, render)
 
     def show_heatmap(self, matrix):
+        """Version statique (une seule frame) -- gardee pour compatibilite."""
         fig = Figure(figsize=(10, 7), dpi=100)
         ax = fig.add_subplot(111)
         im = ax.imshow(matrix, cmap="inferno", interpolation="nearest")
@@ -558,6 +577,36 @@ class FullscreenWindow(tk.Toplevel):
         canvas = FigureCanvasTkAgg(fig, master=self.content)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
+
+    def show_live_heatmap(self, get_matrix_fn, refresh_ms=300):
+        """
+        Heatmap qui se rafraichit en continu tant que la fenetre reste ouverte.
+        get_matrix_fn : fonction sans argument retournant la derniere matrice
+        (typiquement self.sensor.get_scaled du thread capteur).
+        """
+        initial = get_matrix_fn()
+        fig = Figure(figsize=(10, 7), dpi=100)
+        ax = fig.add_subplot(111)
+        im = ax.imshow(initial, cmap="inferno", interpolation="nearest",
+                        vmin=float(initial.min()), vmax=float(initial.max()))
+        title = ax.set_title("", fontsize=14)
+        fig.colorbar(im, ax=ax, label="Temperature (C)")
+
+        canvas = FigureCanvasTkAgg(fig, master=self.content)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        def _update():
+            if not self.winfo_exists():
+                return  # fenetre fermee -> on arrete la boucle de rafraichissement
+            matrix = get_matrix_fn()
+            im.set_data(matrix)
+            im.set_clim(vmin=float(matrix.min()), vmax=float(matrix.max()))
+            title.set_text(f"Temperatures brutes (live)  |  min={matrix.min():.1f}C   max={matrix.max():.1f}C")
+            canvas.draw_idle()
+            self._live_job = self.after(refresh_ms, _update)
+
+        _update()
 
 
 # ============================================================================
@@ -782,6 +831,7 @@ class App(tk.Tk):
         dialog.attributes("-fullscreen", True)
         dialog.configure(bg=COLOR_BG)
         dialog.bind("<Escape>", lambda e: dialog.destroy())
+        _grab_focus(dialog)
 
         tk.Label(dialog, text="Cliquez les 4 coins du PCB sur l'image RGB",
                  font=("Arial", 16, "bold"), bg=COLOR_BG).pack(pady=10)
@@ -803,10 +853,9 @@ class App(tk.Tk):
     # Bouton 3 : Heatmap brute
     # ------------------------------------------------------------------
     def show_raw_heatmap(self):
-        matrix = self.sensor.get_scaled()
-        win = FullscreenWindow(self, "Heatmap brute (sans alteration)")
-        win.show_heatmap(matrix)
-        self.log(f"Heatmap affichee (min={matrix.min():.1f}C, max={matrix.max():.1f}C)", level="ok")
+        win = FullscreenWindow(self, "Heatmap brute (live, sans alteration)")
+        win.show_live_heatmap(self.sensor.get_scaled, refresh_ms=300)
+        self.log("Heatmap live demarree (rafraichissement continu).", level="ok")
 
 
 if __name__ == "__main__":
