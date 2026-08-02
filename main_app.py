@@ -40,11 +40,11 @@ from PIL import Image, ImageTk
 # CONFIGURATION - gardez vos valeurs ici, c'est le seul bloc a modifier
 # ============================================================================
 
-STARTUP_BASH_COMMAND = "echo 'Environnement pret'"   # <-- REMPLACEZ PAR VOTRE VRAIE COMMANDE
+STARTUP_BASH_COMMAND = "./CameraThermique/examples/build/GUI "   # <-- REMPLACEZ PAR VOTRE VRAIE COMMANDE
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-CALIBRATION_SCRIPT = os.path.join(SCRIPT_DIR, "etape1_calibrage_homographie.py")
-MAIN_SCRIPT = os.path.join(SCRIPT_DIR, "etape2_3_4_alignement_overlay.py")
+CALIBRATION_SCRIPT = os.path.join(SCRIPT_DIR,"CameraRGB", "calibrage_homographie.py")
+MAIN_SCRIPT = os.path.join(SCRIPT_DIR, "CameraRGB", "alignement_overlay.py")
 
 DEFAULT_THERMAL_MATRIX = "./data/CameraArrayScaled.txt"
 DEFAULT_RGB = "./data/RGB_frame.jpg"  # non utilise par les scripts actuels (webcam directe), garde pour reference
@@ -146,7 +146,7 @@ class App(tk.Tk):
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
 
-        tk.Label(header, text="🌡️  Controle Thermique PCB", font=("Arial", 26, "bold"),
+        tk.Label(header, text=" Controle Thermique PCB", font=("Arial", 26, "bold"),
                  bg=COLOR_HEADER, fg="white").pack(side="left", padx=30)
 
         tk.Button(header, text="✕", font=("Arial", 16, "bold"), bg="#E74C3C", fg="white",
@@ -159,11 +159,11 @@ class App(tk.Tk):
         btn_container.grid_columnconfigure((0, 1, 2), weight=1, uniform="col")
         btn_container.grid_rowconfigure(0, weight=1)
 
-        b1 = BigButton(btn_container, "🧭", "Calibration", "Etape 1 : cliquer les points\nRGB / Thermique",
+        b1 = BigButton(btn_container, "Calibration", "Etape 1 : cliquer les points\nRGB / Thermique",
                         COLOR_BTN_1, self.run_calibration)
-        b2 = BigButton(btn_container, "🔥", "Detection", "Etapes 2-3-4 : trouver et\nlocaliser le point chaud",
+        b2 = BigButton(btn_container, "Detection", "Etapes 2-3-4 : trouver et\nlocaliser le point chaud",
                         COLOR_BTN_2, self.run_main_detection)
-        b3 = BigButton(btn_container, "🗺️", "Heatmap brute", "Voir la matrice thermique\nsans aucune alteration",
+        b3 = BigButton(btn_container, "Heatmap brute", "Voir la matrice thermique\nsans aucune alteration",
                         COLOR_BTN_3, self.show_raw_heatmap)
 
         for i, b in enumerate((b1, b2, b3)):
