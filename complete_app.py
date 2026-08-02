@@ -6,8 +6,20 @@ Controle Thermique PCB -- Application UNIQUE (tout-en-un)
 Fusionne dans un seul fichier :
   - La lecture du capteur MLX90640 (thread de fond, remplace l'executable C++ separe)
   - Le calibrage par homographie (Etape 1) -- clic de points DANS des Canvas Tkinter
-  - La detection + overlay thermique component-aware (Etapes 2/3/4)
-  - L'affichage de la heatmap brute
+  - La detection + overlay thermique component-aware (Etapes 2/3/4), en LIVE
+  - L'affichage de la heatmap brute, en LIVE
+
+ARCHITECTURE FENETRE UNIQUE
+----------------------------
+Contrairement aux versions precedentes, cette version n'ouvre JAMAIS de
+fenetre Toplevel secondaire. Tout se passe dans LA MEME fenetre racine
+(tk.Tk) : un conteneur central affiche une "vue" a la fois (menu,
+calibrage, detection live, heatmap live), et on bascule d'une vue a
+l'autre en detruisant l'ancienne et en montant la nouvelle a la place
+(App.show_view). Comme il n'existe jamais plus d'une fenetre reelle,
+le gestionnaire de fenetres n'a plus jamais a arbitrer le focus entre
+plusieurs fenetres -- le probleme de focus qui ne "s'accrochait" pas a
+la bonne fenetre disparait structurellement.
 
 AUCUN fichier intermediaire n'est lu ou ecrit : la matrice thermique, l'image
 RGB, l'homographie et le resultat final restent des objets Python/numpy en
@@ -238,69 +250,6 @@ def build_component_aware_overlay(temp_warped, valid_mask, component_contours, c
     return colorized, vmin, vmax, pct
 
 
-def run_detection_pipeline(temp_matrix, rgb_img, blueprint_img, H1,
-                            manual_rgb_corners=None, blueprint_corners=None, alpha=0.5):
-    """
-    Pipeline complet Etapes 2/3/4, entierement en memoire.
-    manual_rgb_corners : coins RGB fournis manuellement (sinon detection auto).
-    blueprint_corners : par defaut, les 4 coins de l'image blueprint entiere.
-    Retourne (image_resultat_bgr, hotspot_temp_C, (xj, yj), infos_dict).
-    """
-    bh, bw = blueprint_img.shape[:2]
-
-    if manual_rgb_corners is not None:
-        rgb_corners = np.array(manual_rgb_corners, dtype=np.float32)
-    else:
-        rgb_corners = detect_pcb_corners(rgb_img)
-        if rgb_corners is None:
-            raise RuntimeError("Detection automatique des coins PCB (RGB) echouee -- coins manuels requis.")
-
-    if blueprint_corners is None:
-        blueprint_corners = np.array([[0, 0], [bw - 1, 0], [bw - 1, bh - 1], [0, bh - 1]], dtype=np.float32)
-    else:
-        blueprint_corners = np.array(blueprint_corners, dtype=np.float32)
-
-    H2 = compute_alignment_homography(rgb_corners, blueprint_corners)
-    H_total = H2 @ H1
-
-    xt, yt, hotspot_temp = find_hotspot(temp_matrix)
-    xj, yj = project_point(xt, yt, H_total)
-
-    SENTINEL = -9999.0
-    temp_warped = cv2.warpPerspective(temp_matrix, H_total, (bw, bh), flags=cv2.INTER_LINEAR, borderValue=SENTINEL)
-
-    coverage = np.full(temp_matrix.shape, 255, dtype=np.uint8)
-    coverage_warped = cv2.warpPerspective(coverage, H_total, (bw, bh), flags=cv2.INTER_NEAREST, borderValue=0)
-    valid_mask = (coverage_warped > 200).astype(np.uint8) * 255
-    valid_mask_3c = cv2.merge([valid_mask] * 3)
-
-    rgb_warped = cv2.warpPerspective(rgb_img, H2, (bw, bh))
-    component_contours = detect_component_contours(rgb_warped)
-    overlay_colorized, vmin_c, vmax_c, pct_blocks = build_component_aware_overlay(
-        temp_warped, valid_mask, component_contours
-    )
-
-    blended = blueprint_img.copy()
-    blend_zone = cv2.addWeighted(blueprint_img, 1 - alpha, overlay_colorized, alpha, 0)
-    blended = np.where(valid_mask_3c > 0, blend_zone, blended)
-
-    cv2.drawMarker(blended, (int(xj), int(yj)), (0, 0, 255), cv2.MARKER_CROSS, markerSize=30, thickness=3)
-    cv2.circle(blended, (int(xj), int(yj)), 18, (0, 0, 255), 2)
-    cv2.putText(blended, f"{hotspot_temp:.1f}C", (int(xj) + 22, int(yj) - 10),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-
-    infos = {
-        "hotspot_thermal_px": (xt, yt),
-        "hotspot_temperature_C": hotspot_temp,
-        "hotspot_blueprint_px": (xj, yj),
-        "temperature_min_C": vmin_c,
-        "temperature_max_C": vmax_c,
-        "pct_blocks_uniformes": pct_blocks,
-        "n_contours_composants": len(component_contours),
-    }
-    return blended, hotspot_temp, (xj, yj), infos
-
-
 def grab_rgb_frame():
     """Capture UNE frame depuis le flux IP -- meme methode qu'avant, inchangee."""
     cap = cv2.VideoCapture(RGB_STREAM_URL)
@@ -313,28 +262,15 @@ def grab_rgb_frame():
     return frame
 
 
-def _grab_focus(win):
-    """Force une fenetre Toplevel a passer au premier plan ET recevoir le focus clavier.
-    Détourne également tous les événements de clic/focus vers cette fenêtre (modal).
-    Force la fenêtre au premier plan absolu (topmost) pour éviter qu'elle soit cachée par le menu."""
-    win.lift()
-    win.focus_force()
-    win.attributes("-topmost", True)
-    try:
-        win.grab_set()
-    except Exception:
-        pass
-    win.after(100, lambda: _apply_grab_secure(win))
-
-
-def _apply_grab_secure(win):
-    if win.winfo_exists():
-        win.focus_force()
-        win.attributes("-topmost", True)
-        try:
-            win.grab_set()
-        except Exception:
-            pass
+def make_header(parent, text, back_command, back_text="Retour au menu", back_bg="#A0C4FF"):
+    """Barre d'en-tete standard (titre + bouton retour), utilisee par toutes les vues."""
+    bar = tk.Frame(parent, bg=COLOR_HEADER, height=60)
+    bar.pack(fill="x", side="top")
+    bar.pack_propagate(False)
+    tk.Label(bar, text=text, font=("Arial", 16, "bold"), bg=COLOR_HEADER, fg="white").pack(side="left", padx=20)
+    tk.Button(bar, text=back_text, font=("Arial", 12, "bold"), bg=back_bg, fg=COLOR_BTN_TEXT, bd=0,
+              command=back_command, padx=12, pady=6).pack(side="right", padx=20, pady=10)
+    return bar
 
 
 # ============================================================================
@@ -344,7 +280,7 @@ def _apply_grab_secure(win):
 class SensorThread(threading.Thread):
     """
     Lit le MLX90640 en continu et garde la derniere matrice en memoire
-    (proteg par un verrou). Mode simulation si le materiel est absent.
+    (protege par un verrou). Mode simulation si le materiel est absent.
     """
 
     def __init__(self):
@@ -365,7 +301,8 @@ class SensorThread(threading.Thread):
                     self._mlx.emissivity = 0.95
                 except AttributeError:
                     pass
-            except Exception:
+            except Exception as e:
+                print(f"[MLX90640 init failed] {e}", file=sys.stderr)
                 self.simulation = True  # bascule en simulation si l'init materielle echoue
 
     def get_raw(self):
@@ -399,7 +336,10 @@ class SensorThread(threading.Thread):
                     with self._lock:
                         self._raw = raw
                 except Exception as e:
-                    # glitch de lecture ou erreur I2C -- on ecrit sur stderr sans crasher le thread
+                    # glitch de lecture ou erreur I2C -- on ecrit sur stderr sans jamais
+                    # tuer le thread (une exception non rattrapee ici arreterait
+                    # silencieusement les mises a jour, et l'UI figerait sur la
+                    # derniere frame sans que rien ne l'indique).
                     print(f"[SensorThread Error] {e}", file=sys.stderr)
                 time.sleep(0.25)
 
@@ -453,264 +393,7 @@ class PointPickerCanvas(tk.Frame):
 
 
 # ============================================================================
-# DIALOGUE : calibrage (clic thermique puis clic RGB)
-# ============================================================================
-
-class CalibrationDialog(tk.Toplevel):
-    def __init__(self, master, thermal_bgr, rgb_bgr, min_points, on_complete):
-        super().__init__(master)
-        self.title("Calibrage - Etape 1")
-        self.attributes("-fullscreen", True)
-        self.configure(bg=COLOR_BG)
-        self.min_points = min_points
-        self.on_complete = on_complete
-        self.thermal_bgr = thermal_bgr
-        self.rgb_bgr = rgb_bgr
-        self.thermal_points = None
-        self.bind("<Escape>", lambda e: self.destroy())
-        _grab_focus(self)
-
-        self._show_step_thermal()
-
-    def _header(self, text):
-        bar = tk.Frame(self, bg=COLOR_HEADER, height=60)
-        bar.pack(fill="x", side="top")
-        bar.pack_propagate(False)
-        tk.Label(bar, text=text, font=("Arial", 16, "bold"), bg=COLOR_HEADER, fg="white").pack(side="left", padx=20)
-        tk.Button(bar, text="Annuler", font=("Arial", 12, "bold"), bg="#E74C3C", fg="white", bd=0,
-                  command=self.destroy).pack(side="right", padx=20, pady=10)
-
-    def _show_step_thermal(self):
-        for w in self.winfo_children():
-            w.destroy()
-        self._header(f"1/2 - Cliquez {self.min_points}+ points sur la THERMIQUE (clic droit = annuler)")
-        self.picker = PointPickerCanvas(self, self.thermal_bgr)
-        self.picker.pack(expand=True, pady=10)
-        tk.Button(self, text="Valider ->", font=("Arial", 14, "bold"), bg=COLOR_BTN_2, bd=0,
-                  command=self._validate_thermal).pack(pady=10)
-
-    def _validate_thermal(self):
-        pts = self.picker.get_points()
-        if len(pts) < self.min_points:
-            messagebox.showwarning("Points insuffisants", f"Il faut au moins {self.min_points} points.", parent=self)
-            return
-        self.thermal_points = pts
-        self._show_step_rgb()
-
-    def _show_step_rgb(self):
-        for w in self.winfo_children():
-            w.destroy()
-        self._header(f"2/2 - Cliquez {len(self.thermal_points)} points sur le RGB (MEME ORDRE)")
-        self.picker = PointPickerCanvas(self, self.rgb_bgr)
-        self.picker.pack(expand=True, pady=10)
-        tk.Button(self, text="Calculer l'homographie", font=("Arial", 14, "bold"), bg=COLOR_BTN_1, bd=0,
-                  command=self._validate_rgb).pack(pady=10)
-
-    def _validate_rgb(self):
-        pts = self.picker.get_points()
-        if len(pts) != len(self.thermal_points):
-            messagebox.showwarning(
-                "Nombre de points different",
-                f"{len(self.thermal_points)} points thermiques vs {len(pts)} points RGB. "
-                f"Recommencez avec le meme nombre.",
-                parent=self
-            )
-            return
-
-        pts_thermal = np.array(self.thermal_points, dtype=np.float32)
-        pts_rgb = np.array(pts, dtype=np.float32)
-        H, mask = cv2.findHomography(pts_thermal, pts_rgb, cv2.RANSAC, ransacReprojThreshold=3.0)
-
-        if H is None:
-            messagebox.showerror("Echec", "Le calcul de l'homographie a echoue. Reessayez avec d'autres points.", parent=self)
-            return
-
-        inliers = int(mask.sum())
-        pts_thermal_h = cv2.perspectiveTransform(pts_thermal.reshape(-1, 1, 2), H).reshape(-1, 2)
-        erreurs = np.linalg.norm(pts_thermal_h - pts_rgb, axis=1)
-
-        self.on_complete(H, {
-            "inliers": inliers, "total": len(pts_thermal),
-            "erreur_moyenne_px": float(erreurs.mean()), "erreur_max_px": float(erreurs.max()),
-        })
-        self.destroy()
-
-
-# ============================================================================
-# FENETRE PLEIN ECRAN GENERIQUE (resultat, heatmap)
-# ============================================================================
-
-class FullscreenWindow(tk.Toplevel):
-    def __init__(self, master, title):
-        super().__init__(master)
-        self.attributes("-fullscreen", True)
-        self.configure(bg="black")
-        self.bind("<Escape>", lambda e: self.destroy())
-        self._live_job = None
-        self.bind("<Destroy>", self._on_destroy)
-        _grab_focus(self)
-
-        top_bar = tk.Frame(self, bg=COLOR_HEADER, height=60)
-        top_bar.pack(fill="x", side="top")
-        top_bar.pack_propagate(False)
-        tk.Label(top_bar, text=title, font=("Arial", 18, "bold"), bg=COLOR_HEADER, fg="white").pack(side="left", padx=20)
-        tk.Button(top_bar, text="Retour au menu", font=("Arial", 14, "bold"), bg="#A0C4FF", fg=COLOR_BTN_TEXT,
-                  bd=0, command=self.destroy, padx=15, pady=8).pack(side="right", padx=20, pady=8)
-
-        self.content = tk.Frame(self, bg="black")
-        self.content.pack(fill="both", expand=True)
-
-    def _on_destroy(self, event):
-        # Stoppe la boucle de rafraichissement live si la fenetre est fermee
-        if event.widget is self:
-            self._live_job = None
-
-    def show_bgr_image(self, bgr_image):
-        rgb = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
-        img_label = tk.Label(self.content, bg="black")
-        img_label.pack(fill="both", expand=True)
-
-        def render(event=None):
-            fw, fh = self.content.winfo_width(), self.content.winfo_height()
-            if fw < 10 or fh < 10:
-                return
-            h, w = rgb.shape[:2]
-            scale = min(fw / w, fh / h)
-            resized = cv2.resize(rgb, (max(1, int(w * scale)), max(1, int(h * scale))))
-            photo = ImageTk.PhotoImage(image=Image.fromarray(resized))
-            img_label.configure(image=photo)
-            img_label.image = photo
-
-        self.content.bind("<Configure>", render)
-        self.after(100, render)
-
-    def show_heatmap(self, matrix):
-        """Version statique (une seule frame) -- gardee pour compatibilite."""
-        fig = Figure(figsize=(10, 7), dpi=100)
-        ax = fig.add_subplot(111)
-        im = ax.imshow(matrix, cmap="inferno", interpolation="nearest")
-        ax.set_title(f"Temperatures brutes  |  min={matrix.min():.1f}C   max={matrix.max():.1f}C", fontsize=14)
-        fig.colorbar(im, ax=ax, label="Temperature (C)")
-        canvas = FigureCanvasTkAgg(fig, master=self.content)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True)
-
-    def show_live_heatmap(self, get_matrix_fn, refresh_ms=500):
-        """
-        Heatmap qui se rafraichit en continu tant que la fenetre reste ouverte.
-        get_matrix_fn : fonction sans argument retournant la derniere matrice
-        (typiquement self.sensor.get_scaled du thread capteur).
-        """
-        initial = get_matrix_fn()
-        fig = Figure(figsize=(10, 7), dpi=100)
-        ax = fig.add_subplot(111)
-        im = ax.imshow(initial, cmap="inferno", interpolation="nearest",
-                        vmin=float(initial.min()), vmax=float(initial.max()))
-        title = ax.set_title("", fontsize=14)
-        fig.colorbar(im, ax=ax, label="Temperature (C)")
-
-        canvas = FigureCanvasTkAgg(fig, master=self.content)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True)
-
-        def _update():
-            if not self.winfo_exists():
-                return  # fenetre fermee -> on arrete la boucle de rafraichissement
-            matrix = get_matrix_fn()
-            im.set_data(matrix)
-            im.set_clim(vmin=float(matrix.min()), vmax=float(matrix.max()))
-            title.set_text(f"Temperatures brutes (live)  |  min={matrix.min():.1f}C   max={matrix.max():.1f}C")
-            canvas.draw_idle()
-            self._live_job = self.after(refresh_ms, _update)
-
-        _update()
-
-    def show_live_detection(self, sensor, rgb_frame, blueprint_img, H1, manual_rgb_corners=None, refresh_ms=500, alpha=0.5):
-        """
-        Calcule et affiche l'overlay thermique aligne en temps reel (live).
-        Evite de capturer a nouveau le flux RGB ou de refaire la detection de contours a chaque frame (performance).
-        """
-        bh, bw = blueprint_img.shape[:2]
-
-        if manual_rgb_corners is not None:
-            rgb_corners = np.array(manual_rgb_corners, dtype=np.float32)
-        else:
-            rgb_corners = detect_pcb_corners(rgb_frame)
-            if rgb_corners is None:
-                raise RuntimeError("Detection automatique des coins PCB (RGB) echouee -- coins manuels requis.")
-
-        blueprint_corners = np.array([[0, 0], [bw - 1, 0], [bw - 1, bh - 1], [0, bh - 1]], dtype=np.float32)
-        H2 = compute_alignment_homography(rgb_corners, blueprint_corners)
-        H_total = H2 @ H1
-
-        # Generer le masque valide et les contours
-        temp_matrix = sensor.get_scaled()
-        coverage = np.full(temp_matrix.shape, 255, dtype=np.uint8)
-        coverage_warped = cv2.warpPerspective(coverage, H_total, (bw, bh), flags=cv2.INTER_NEAREST, borderValue=0)
-        valid_mask = (coverage_warped > 200).astype(np.uint8) * 255
-        valid_mask_3c = cv2.merge([valid_mask] * 3)
-
-        rgb_warped = cv2.warpPerspective(rgb_frame, H2, (bw, bh))
-        component_contours = detect_component_contours(rgb_warped)
-
-        img_label = tk.Label(self.content, bg="black")
-        img_label.pack(fill="both", expand=True)
-
-        self.last_blended = None
-
-        def render(event=None):
-            if self.last_blended is None:
-                return
-            fw, fh = self.content.winfo_width(), self.content.winfo_height()
-            if fw < 10 or fh < 10:
-                return
-            h, w = self.last_blended.shape[:2]
-            scale = min(fw / w, fh / h)
-            resized = cv2.resize(self.last_blended, (max(1, int(w * scale)), max(1, int(h * scale))))
-            photo = ImageTk.PhotoImage(image=Image.fromarray(resized))
-            img_label.configure(image=photo)
-            img_label.image = photo
-
-        self.content.bind("<Configure>", render)
-
-        SENTINEL = -9999.0
-
-        def _update():
-            if not self.winfo_exists():
-                return
-            
-            temp_matrix = sensor.get_scaled()
-            xt, yt, hotspot_temp = find_hotspot(temp_matrix)
-            xj, yj = project_point(xt, yt, H_total)
-
-            temp_warped = cv2.warpPerspective(temp_matrix, H_total, (bw, bh), flags=cv2.INTER_LINEAR, borderValue=SENTINEL)
-            
-            try:
-                overlay_colorized, vmin_c, vmax_c, pct_blocks = build_component_aware_overlay(
-                    temp_warped, valid_mask, component_contours
-                )
-            except Exception as e:
-                print(f"[LiveDetection Error] {e}", file=sys.stderr)
-                self._live_job = self.after(refresh_ms, _update)
-                return
-
-            blend_zone = cv2.addWeighted(blueprint_img, 1 - alpha, overlay_colorized, alpha, 0)
-            blended = np.where(valid_mask_3c > 0, blend_zone, blueprint_img)
-
-            cv2.drawMarker(blended, (int(xj), int(yj)), (0, 0, 255), cv2.MARKER_CROSS, markerSize=30, thickness=3)
-            cv2.circle(blended, (int(xj), int(yj)), 18, (0, 0, 255), 2)
-            cv2.putText(blended, f"{hotspot_temp:.1f}C", (int(xj) + 22, int(yj) - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-
-            self.last_blended = cv2.cvtColor(blended, cv2.COLOR_BGR2RGB)
-            render()
-            self._live_job = self.after(refresh_ms, _update)
-
-        _update()
-
-
-# ============================================================================
-# BOUTON "CUTE"
+# VUE : Menu principal
 # ============================================================================
 
 class BigButton(tk.Frame):
@@ -748,8 +431,332 @@ class BigButton(tk.Frame):
         return f"#{r:02x}{g:02x}{b:02x}"
 
 
+class MenuView(tk.Frame):
+    """Vue racine : les 3 gros boutons. Aucune fenetre secondaire n'est jamais ouverte --
+    cliquer un bouton fait juste basculer app.show_view() vers une autre vue."""
+
+    def __init__(self, master, app):
+        super().__init__(master, bg=COLOR_BG)
+        self.app = app
+
+        tk.Label(self, text=" Controle Thermique PCB", font=("Arial", 26, "bold"),
+                 bg=COLOR_BG, fg=COLOR_HEADER).pack(fill="x", pady=(20, 0), padx=10, anchor="w")
+
+        btn_container = tk.Frame(self, bg=COLOR_BG)
+        btn_container.pack(fill="both", expand=True, padx=40, pady=30)
+        btn_container.grid_columnconfigure((0, 1, 2), weight=1, uniform="col")
+        btn_container.grid_rowconfigure(0, weight=1)
+
+        b1 = BigButton(btn_container, "Calibration", "Etape 1 : cliquer les points\nRGB / Thermique",
+                       COLOR_BTN_1, lambda: app.show_view(CalibrationView))
+        b2 = BigButton(btn_container, "Detection", "Etapes 2-3-4 : trouver et\nlocaliser le point chaud (live)",
+                       COLOR_BTN_2, self._start_detection)
+        b3 = BigButton(btn_container, "Heatmap brute", "Voir la matrice thermique\nsans aucune alteration (live)",
+                       COLOR_BTN_3, lambda: app.show_view(HeatmapView))
+        for i, b in enumerate((b1, b2, b3)):
+            b.grid(row=0, column=i, sticky="nsew", padx=15, pady=15)
+
+    def _start_detection(self):
+        if self.app.H1 is None:
+            messagebox.showwarning("Calibrage requis", "Lancez d'abord la Calibration.", parent=self.app)
+            return
+        if self.app.blueprint_img is None:
+            messagebox.showerror("Blueprint manquant", f"Impossible de charger {BLUEPRINT_PATH}.", parent=self.app)
+            return
+        self.app.show_view(DetectionView)
+
+
 # ============================================================================
-# APPLICATION PRINCIPALE
+# VUE : Calibrage (clic thermique puis clic RGB) -- remplace CalibrationDialog
+# ============================================================================
+
+class CalibrationView(tk.Frame):
+    def __init__(self, master, app):
+        super().__init__(master, bg=COLOR_BG)
+        self.app = app
+        self.thermal_bgr = None
+        self.rgb_bgr = None
+        self.thermal_points = None
+        self.picker = None
+
+        make_header(self, "Calibrage - preparation...", lambda: app.show_view(MenuView), "Annuler", "#E74C3C")
+        tk.Label(self, text="Capture d'une frame RGB en cours...", font=("Arial", 14),
+                 bg=COLOR_BG).pack(expand=True)
+        # laisse le temps a la fenetre de s'afficher avant l'appel bloquant grab_rgb_frame()
+        self.after(50, self._start_capture)
+
+    def stop(self):
+        pass  # aucune boucle live a arreter dans cette vue
+
+    def _clear(self):
+        for w in self.winfo_children():
+            w.destroy()
+
+    def _start_capture(self):
+        try:
+            self.app.log("Capture d'une frame RGB pour le calibrage...")
+            self.rgb_bgr = grab_rgb_frame()
+        except Exception as e:
+            messagebox.showerror("Erreur camera", str(e), parent=self.app)
+            self.app.show_view(MenuView)
+            return
+        self.thermal_bgr = temp_matrix_to_bgr(self.app.sensor.get_scaled())
+        self._show_step_thermal()
+
+    def _show_step_thermal(self):
+        self._clear()
+        make_header(self, "1/2 - Cliquez 4+ points sur la THERMIQUE (clic droit = annuler)",
+                    lambda: self.app.show_view(MenuView), "Annuler", "#E74C3C")
+        self.picker = PointPickerCanvas(self, self.thermal_bgr)
+        self.picker.pack(expand=True, pady=10)
+        tk.Button(self, text="Valider ->", font=("Arial", 14, "bold"), bg=COLOR_BTN_2, bd=0,
+                  command=self._validate_thermal).pack(pady=10)
+
+    def _validate_thermal(self):
+        pts = self.picker.get_points()
+        if len(pts) < 4:
+            messagebox.showwarning("Points insuffisants", "Il faut au moins 4 points.", parent=self.app)
+            return
+        self.thermal_points = pts
+        self._show_step_rgb()
+
+    def _show_step_rgb(self):
+        self._clear()
+        make_header(self, f"2/2 - Cliquez {len(self.thermal_points)} points sur le RGB (MEME ORDRE)",
+                    lambda: self.app.show_view(MenuView), "Annuler", "#E74C3C")
+        self.picker = PointPickerCanvas(self, self.rgb_bgr)
+        self.picker.pack(expand=True, pady=10)
+        tk.Button(self, text="Calculer l'homographie", font=("Arial", 14, "bold"), bg=COLOR_BTN_1, bd=0,
+                  command=self._validate_rgb).pack(pady=10)
+
+    def _validate_rgb(self):
+        pts = self.picker.get_points()
+        if len(pts) != len(self.thermal_points):
+            messagebox.showwarning(
+                "Nombre de points different",
+                f"{len(self.thermal_points)} points thermiques vs {len(pts)} points RGB. "
+                f"Recommencez avec le meme nombre.",
+                parent=self.app
+            )
+            return
+
+        pts_thermal = np.array(self.thermal_points, dtype=np.float32)
+        pts_rgb = np.array(pts, dtype=np.float32)
+        H, mask = cv2.findHomography(pts_thermal, pts_rgb, cv2.RANSAC, ransacReprojThreshold=3.0)
+
+        if H is None:
+            messagebox.showerror("Echec", "Le calcul de l'homographie a echoue. Reessayez avec d'autres points.",
+                                  parent=self.app)
+            return
+
+        inliers = int(mask.sum())
+        pts_thermal_h = cv2.perspectiveTransform(pts_thermal.reshape(-1, 1, 2), H).reshape(-1, 2)
+        erreurs = np.linalg.norm(pts_thermal_h - pts_rgb, axis=1)
+
+        self.app.H1 = H
+        self.app.log(f"Calibrage termine : {inliers}/{len(pts_thermal)} inliers, "
+                      f"erreur moyenne {erreurs.mean():.2f}px", level="ok")
+        self.app.show_view(MenuView)
+
+
+# ============================================================================
+# VUE : Detection + Overlay LIVE -- remplace FullscreenWindow.show_live_detection
+# ============================================================================
+
+class DetectionView(tk.Frame):
+    def __init__(self, master, app):
+        super().__init__(master, bg="black")
+        self.app = app
+        self._job = None
+        self.rgb_frame = None
+
+        make_header(self, "Detection - preparation...", lambda: app.show_view(MenuView))
+        tk.Label(self, text="Capture d'une frame RGB en cours...", font=("Arial", 14),
+                 bg="black", fg="white").pack(expand=True)
+        self.after(50, self._start_capture)
+
+    def stop(self):
+        if self._job is not None:
+            self.after_cancel(self._job)
+            self._job = None
+
+    def _clear(self):
+        for w in self.winfo_children():
+            w.destroy()
+
+    def _start_capture(self):
+        try:
+            self.app.log("Capture d'une frame RGB pour la detection...")
+            self.rgb_frame = grab_rgb_frame()
+        except Exception as e:
+            messagebox.showerror("Erreur camera", str(e), parent=self.app)
+            self.app.show_view(MenuView)
+            return
+
+        try:
+            self.app.log("Initialisation de la detection et overlay live...")
+            self._setup_live(self.rgb_frame, manual_corners=None)
+        except RuntimeError as e:
+            self.app.log(f"{e} Basculement en selection manuelle des coins.", level="err")
+            self._build_manual_corner_picker(self.rgb_frame)
+        except Exception as e:
+            messagebox.showerror("Erreur", str(e), parent=self.app)
+            self.app.show_view(MenuView)
+
+    def _build_manual_corner_picker(self, rgb_frame):
+        self._clear()
+        make_header(self, "Cliquez les 4 coins du PCB sur l'image RGB",
+                    lambda: self.app.show_view(MenuView), "Annuler", "#E74C3C")
+        picker = PointPickerCanvas(self, rgb_frame)
+        picker.pack(expand=True)
+
+        def validate():
+            pts = picker.get_points()
+            if len(pts) != 4:
+                messagebox.showwarning("4 points requis", "Cliquez exactement 4 coins.", parent=self.app)
+                return
+            try:
+                self._setup_live(rgb_frame, manual_corners=pts)
+            except Exception as e:
+                messagebox.showerror("Erreur", str(e), parent=self.app)
+                self.app.show_view(MenuView)
+
+        tk.Button(self, text="Valider", font=("Arial", 14, "bold"), bg=COLOR_BTN_2, bd=0,
+                  command=validate).pack(pady=10)
+
+    def _setup_live(self, rgb_frame, manual_corners, alpha=0.5, refresh_ms=500):
+        """Calcule tout ce qui est constant (homographie, masque, contours) UNE fois,
+        puis demarre la boucle live qui ne recalcule que la temperature et l'overlay."""
+        blueprint_img = self.app.blueprint_img
+        H1 = self.app.H1
+        bh, bw = blueprint_img.shape[:2]
+
+        if manual_corners is not None:
+            rgb_corners = np.array(manual_corners, dtype=np.float32)
+        else:
+            rgb_corners = detect_pcb_corners(rgb_frame)
+            if rgb_corners is None:
+                raise RuntimeError("Detection automatique des coins PCB (RGB) echouee -- coins manuels requis.")
+
+        blueprint_corners = np.array([[0, 0], [bw - 1, 0], [bw - 1, bh - 1], [0, bh - 1]], dtype=np.float32)
+        H2 = compute_alignment_homography(rgb_corners, blueprint_corners)
+        H_total = H2 @ H1
+
+        coverage = np.full((SRC_H * UPSCALE, SRC_W * UPSCALE), 255, dtype=np.uint8)
+        coverage_warped = cv2.warpPerspective(coverage, H_total, (bw, bh), flags=cv2.INTER_NEAREST, borderValue=0)
+        valid_mask = (coverage_warped > 200).astype(np.uint8) * 255
+        valid_mask_3c = cv2.merge([valid_mask] * 3)
+
+        rgb_warped = cv2.warpPerspective(rgb_frame, H2, (bw, bh))
+        component_contours = detect_component_contours(rgb_warped)
+
+        self._clear()
+        make_header(self, "Resultat - Point chaud detecte (live)", lambda: self.app.show_view(MenuView))
+        content = tk.Frame(self, bg="black")
+        content.pack(fill="both", expand=True)
+        img_label = tk.Label(content, bg="black")
+        img_label.pack(fill="both", expand=True)
+
+        self._last_rgb = None
+
+        def render(event=None):
+            if self._last_rgb is None or not self.winfo_exists():
+                return
+            fw, fh = content.winfo_width(), content.winfo_height()
+            if fw < 10 or fh < 10:
+                return
+            h, w = self._last_rgb.shape[:2]
+            scale = min(fw / w, fh / h)
+            resized = cv2.resize(self._last_rgb, (max(1, int(w * scale)), max(1, int(h * scale))))
+            photo = ImageTk.PhotoImage(image=Image.fromarray(resized))
+            img_label.configure(image=photo)
+            img_label.image = photo
+
+        content.bind("<Configure>", render)
+
+        SENTINEL = -9999.0
+
+        def _update():
+            if not self.winfo_exists():
+                return
+            temp_matrix = self.app.sensor.get_scaled()
+            xt, yt, hotspot_temp = find_hotspot(temp_matrix)
+            xj, yj = project_point(xt, yt, H_total)
+
+            temp_warped = cv2.warpPerspective(temp_matrix, H_total, (bw, bh),
+                                               flags=cv2.INTER_LINEAR, borderValue=SENTINEL)
+            try:
+                overlay_colorized, vmin_c, vmax_c, pct_blocks = build_component_aware_overlay(
+                    temp_warped, valid_mask, component_contours
+                )
+            except Exception as e:
+                print(f"[LiveDetection Error] {e}", file=sys.stderr)
+                self._job = self.after(refresh_ms, _update)
+                return
+
+            blend_zone = cv2.addWeighted(blueprint_img, 1 - alpha, overlay_colorized, alpha, 0)
+            blended = np.where(valid_mask_3c > 0, blend_zone, blueprint_img)
+
+            cv2.drawMarker(blended, (int(xj), int(yj)), (0, 0, 255), cv2.MARKER_CROSS, markerSize=30, thickness=3)
+            cv2.circle(blended, (int(xj), int(yj)), 18, (0, 0, 255), 2)
+            cv2.putText(blended, f"{hotspot_temp:.1f}C", (int(xj) + 22, int(yj) - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+            self._last_rgb = cv2.cvtColor(blended, cv2.COLOR_BGR2RGB)
+            render()
+            self._job = self.after(refresh_ms, _update)
+
+        _update()
+        self.app.log("Detection live active.", level="ok")
+
+
+# ============================================================================
+# VUE : Heatmap brute LIVE -- remplace FullscreenWindow.show_live_heatmap
+# ============================================================================
+
+class HeatmapView(tk.Frame):
+    def __init__(self, master, app, refresh_ms=500):
+        super().__init__(master, bg="black")
+        self.app = app
+        self._job = None
+
+        make_header(self, "Heatmap brute (live, sans alteration)", lambda: app.show_view(MenuView))
+        content = tk.Frame(self, bg="black")
+        content.pack(fill="both", expand=True)
+
+        initial = app.sensor.get_scaled()
+        fig = Figure(figsize=(10, 7), dpi=100)
+        ax = fig.add_subplot(111)
+        im = ax.imshow(initial, cmap="inferno", interpolation="nearest",
+                        vmin=float(initial.min()), vmax=float(initial.max()))
+        title = ax.set_title("", fontsize=14)
+        fig.colorbar(im, ax=ax, label="Temperature (C)")
+
+        canvas = FigureCanvasTkAgg(fig, master=content)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        def _update():
+            if not self.winfo_exists():
+                return
+            matrix = app.sensor.get_scaled()
+            im.set_data(matrix)
+            im.set_clim(vmin=float(matrix.min()), vmax=float(matrix.max()))
+            title.set_text(f"Temperatures brutes (live)  |  min={matrix.min():.1f}C   max={matrix.max():.1f}C")
+            canvas.draw_idle()
+            self._job = self.after(refresh_ms, _update)
+
+        _update()
+        app.log("Heatmap live demarree (rafraichissement continu).", level="ok")
+
+    def stop(self):
+        if self._job is not None:
+            self.after_cancel(self._job)
+            self._job = None
+
+
+# ============================================================================
+# APPLICATION PRINCIPALE (fenetre unique)
 # ============================================================================
 
 class App(tk.Tk):
@@ -759,17 +766,18 @@ class App(tk.Tk):
         self.configure(bg=COLOR_BG)
         self.attributes("-fullscreen", True)
         self.bind("<F11>", lambda e: self._toggle_fullscreen())
-        self.bind("<Escape>", lambda e: self._confirm_quit())
+        self.bind("<Escape>", lambda e: self._on_escape())
         self.protocol("WM_DELETE_WINDOW", self._confirm_quit)
 
         self.H1 = None  # homographie thermique -> RGB, calculee par le calibrage (en memoire)
         self.blueprint_img = None
+        self.current_view = None
 
         self.sensor = SensorThread()
         self.sensor.start()
 
         self._log_expanded = False
-        self._build_ui()
+        self._build_shell()
         self._load_blueprint()
 
         if self.sensor.simulation:
@@ -777,12 +785,31 @@ class App(tk.Tk):
         else:
             self.log("Capteur MLX90640 detecte, lecture en cours.", level="ok")
 
+        self.show_view(MenuView)
+
     # ------------------------------------------------------------------
+    # Navigation entre vues (remplace la creation de fenetres Toplevel)
+    # ------------------------------------------------------------------
+    def show_view(self, view_class):
+        if self.current_view is not None:
+            stop = getattr(self.current_view, "stop", None)
+            if callable(stop):
+                stop()
+            self.current_view.destroy()
+        self.current_view = view_class(self.container, self)
+        self.current_view.pack(fill="both", expand=True)
+
+    def _on_escape(self):
+        if isinstance(self.current_view, MenuView):
+            self._confirm_quit()
+        else:
+            self.show_view(MenuView)
+
     def _toggle_fullscreen(self):
         self.attributes("-fullscreen", not self.attributes("-fullscreen"))
 
     def _confirm_quit(self):
-        if messagebox.askyesno("Quitter", "Fermer l'application ?"):
+        if messagebox.askyesno("Quitter", "Fermer l'application ?", parent=self):
             self.sensor.stop()
             self.destroy()
 
@@ -794,29 +821,9 @@ class App(tk.Tk):
             self.log(f"!! Blueprint introuvable : {BLUEPRINT_PATH}", level="err")
 
     # ------------------------------------------------------------------
-    def _build_ui(self):
-        header = tk.Frame(self, bg=COLOR_HEADER, height=90)
-        header.pack(fill="x", side="top")
-        header.pack_propagate(False)
-        tk.Label(header, text=" Controle Thermique PCB", font=("Arial", 26, "bold"),
-                 bg=COLOR_HEADER, fg="white").pack(side="left", padx=30)
-        tk.Button(header, text="✕", font=("Arial", 16, "bold"), bg="#E74C3C", fg="white", bd=0,
-                  command=self._confirm_quit, width=3).pack(side="right", padx=20, pady=20)
-
-        btn_container = tk.Frame(self, bg=COLOR_BG)
-        btn_container.pack(fill="both", expand=True, padx=40, pady=30)
-        btn_container.grid_columnconfigure((0, 1, 2), weight=1, uniform="col")
-        btn_container.grid_rowconfigure(0, weight=1)
-
-        b1 = BigButton(btn_container, "Calibration", "Etape 1 : cliquer les points\nRGB / Thermique",
-                       COLOR_BTN_1, self.run_calibration)
-        b2 = BigButton(btn_container, "Detection", "Etapes 2-3-4 : trouver et\nlocaliser le point chaud",
-                       COLOR_BTN_2, self.run_main_detection)
-        b3 = BigButton(btn_container, "Heatmap brute", "Voir la matrice thermique\nsans aucune alteration",
-                       COLOR_BTN_3, self.show_raw_heatmap)
-        for i, b in enumerate((b1, b2, b3)):
-            b.grid(row=0, column=i, sticky="nsew", padx=15, pady=15)
-
+    # Coquille persistante : conteneur de vues + barre de statut/logs
+    # ------------------------------------------------------------------
+    def _build_shell(self):
         self.status_bar = tk.Frame(self, bg=COLOR_LOG_BG, height=46)
         self.status_bar.pack(fill="x", side="bottom")
         self.status_bar.pack_propagate(False)
@@ -829,6 +836,12 @@ class App(tk.Tk):
 
         self.log_box = tk.Text(self, height=6, bg=COLOR_LOG_BG, fg=COLOR_LOG_TEXT,
                                 font=("Consolas", 10), bd=0, state="disabled")
+
+        # Le conteneur central accueille la vue active (MenuView, CalibrationView,
+        # DetectionView, HeatmapView, ...) -- une seule a la fois, jamais de
+        # fenetre Toplevel separee.
+        self.container = tk.Frame(self, bg=COLOR_BG)
+        self.container.pack(fill="both", expand=True, side="top")
 
     def _toggle_log(self):
         self._log_expanded = not self._log_expanded
@@ -850,100 +863,6 @@ class App(tk.Tk):
             self.log_box.configure(state="disabled")
 
         self.after(0, _write)
-
-    # ------------------------------------------------------------------
-    # Bouton 1 : Calibration
-    # ------------------------------------------------------------------
-    def run_calibration(self):
-        try:
-            self.log("Capture d'une frame RGB pour le calibrage...")
-            rgb_frame = grab_rgb_frame()
-        except Exception as e:
-            messagebox.showerror("Erreur camera", str(e))
-            return
-
-        thermal_scaled = self.sensor.get_scaled()
-        thermal_bgr = temp_matrix_to_bgr(thermal_scaled)
-
-        def on_complete(H, meta):
-            self.H1 = H
-            self.log(f"Calibrage termine : {meta['inliers']}/{meta['total']} inliers, "
-                      f"erreur moyenne {meta['erreur_moyenne_px']:.2f}px", level="ok")
-
-        CalibrationDialog(self, thermal_bgr, rgb_frame, min_points=4, on_complete=on_complete)
-
-    # ------------------------------------------------------------------
-    # Bouton 2 : Detection + Overlay
-    # ------------------------------------------------------------------
-    def run_main_detection(self):
-        if self.H1 is None:
-            messagebox.showwarning("Calibrage requis", "Lancez d'abord la Calibration (bouton 1).")
-            return
-        if self.blueprint_img is None:
-            messagebox.showerror("Blueprint manquant", f"Impossible de charger {BLUEPRINT_PATH}.")
-            return
-
-        try:
-            self.log("Capture d'une frame RGB pour la detection...")
-            rgb_frame = grab_rgb_frame()
-        except Exception as e:
-            messagebox.showerror("Erreur camera", str(e))
-            return
-
-        win = FullscreenWindow(self, "Resultat - Point chaud detecte (live)")
-        try:
-            self.log("Initialisation de la detection et overlay live...")
-            win.show_live_detection(self.sensor, rgb_frame, self.blueprint_img, self.H1, refresh_ms=500)
-            self.log("Detection live active.", level="ok")
-        except RuntimeError as e:
-            win.destroy()
-            self.log(f"{e} Basculement en selection manuelle des coins.", level="err")
-            self._run_detection_manual_corners(rgb_frame)
-        except Exception as e:
-            win.destroy()
-            messagebox.showerror("Erreur", str(e))
-            self.log(f"Erreur detection : {e}", level="err")
-
-    def _run_detection_manual_corners(self, rgb_frame):
-        def on_corners_picked(corners):
-            win = FullscreenWindow(self, "Resultat - Point chaud detecte (live, coins manuels)")
-            try:
-                win.show_live_detection(self.sensor, rgb_frame, self.blueprint_img, self.H1, manual_rgb_corners=corners, refresh_ms=500)
-                self.log("Detection live active (coins manuels).", level="ok")
-            except Exception as e:
-                messagebox.showerror("Erreur", str(e), parent=win)
-                win.destroy()
-
-        dialog = tk.Toplevel(self)
-        dialog.title("Coins du PCB (manuel)")
-        dialog.attributes("-fullscreen", True)
-        dialog.configure(bg=COLOR_BG)
-        dialog.bind("<Escape>", lambda e: dialog.destroy())
-        _grab_focus(dialog)
-
-        tk.Label(dialog, text="Cliquez les 4 coins du PCB sur l'image RGB",
-                 font=("Arial", 16, "bold"), bg=COLOR_BG).pack(pady=10)
-        picker = PointPickerCanvas(dialog, rgb_frame)
-        picker.pack(expand=True)
-
-        def validate():
-            pts = picker.get_points()
-            if len(pts) != 4:
-                messagebox.showwarning("4 points requis", "Cliquez exactement 4 coins.", parent=dialog)
-                return
-            dialog.destroy()
-            on_corners_picked(pts)
-
-        tk.Button(dialog, text="Valider", font=("Arial", 14, "bold"), bg=COLOR_BTN_2, bd=0,
-                  command=validate).pack(pady=10)
-
-    # ------------------------------------------------------------------
-    # Bouton 3 : Heatmap brute
-    # ------------------------------------------------------------------
-    def show_raw_heatmap(self):
-        win = FullscreenWindow(self, "Heatmap brute (live, sans alteration)")
-        win.show_live_heatmap(self.sensor.get_scaled, refresh_ms=500)
-        self.log("Heatmap live demarree (rafraichissement continu).", level="ok")
 
 
 if __name__ == "__main__":
