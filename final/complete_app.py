@@ -412,14 +412,11 @@ class PointPickerCanvas(tk.Frame):
 # ============================================================================
 
 class BigButton(tk.Frame):
-    """Bouton 'cute' -- titre seul, sans sous-texte."""
-
-    def __init__(self, master, title, bg, command, width=280, height=90, **kwargs):
-        super().__init__(master, bg=bg, cursor="hand2", width=width, height=height, **kwargs)
+    def __init__(self, master, title, subtitle, bg, command, **kwargs):
+        super().__init__(master, bg=bg, cursor="hand2", **kwargs)
         self.bg = bg
         self.command = command
-        self.pack_propagate(False)
-        self.title_lbl = tk.Label(self, text=title, font=("Arial", 20, "bold"), bg=bg, fg=COLOR_BTN_TEXT)
+        self.title_lbl = tk.Label(self, text=title, font=("Arial", 22, "bold"), bg=bg, fg=COLOR_BTN_TEXT)
         self.title_lbl.pack(expand=True)
         for widget in (self, self.title_lbl):
             widget.bind("<Button-1>", lambda e: self.command())
@@ -445,7 +442,8 @@ class BigButton(tk.Frame):
 
 
 class MenuView(tk.Frame):
-    """Vue racine : les 3 boutons, empiles verticalement et centres a l'ecran."""
+    """Vue racine : les 3 gros boutons. Aucune fenetre secondaire n'est jamais ouverte --
+    cliquer un bouton fait juste basculer app.show_view() vers une autre vue."""
 
     def __init__(self, master, app):
         super().__init__(master, bg=COLOR_BG)
@@ -454,17 +452,20 @@ class MenuView(tk.Frame):
         tk.Label(self, text=" Controle Thermique PCB", font=("Arial", 26, "bold"),
                  bg=COLOR_BG, fg=COLOR_HEADER).pack(fill="x", pady=(20, 0), padx=10, anchor="w")
 
-        # Conteneur centre verticalement et horizontalement dans tout l'espace restant
-        center_container = tk.Frame(self, bg=COLOR_BG)
-        center_container.pack(fill="both", expand=True)
+        btn_container = tk.Frame(self, bg=COLOR_BG)
+        btn_container.pack(fill="both", expand=True)
 
-        btn_stack = tk.Frame(center_container, bg=COLOR_BG)
+        btn_stack = tk.Frame(btn_container, bg=COLOR_BG)
         btn_stack.place(relx=0.5, rely=0.5, anchor="center")
 
-        b1 = BigButton(btn_stack, "Calibration", COLOR_BTN_1, lambda: app.show_view(CalibrationView))
-        b2 = BigButton(btn_stack, "Detection", COLOR_BTN_2, self._start_detection)
-        b3 = BigButton(btn_stack, "Heatmap brute", COLOR_BTN_3, lambda: app.show_view(HeatmapView))
+        b1 = BigButton(btn_stack, "Calibration", "Etape 1 : cliquer les points\nRGB / Thermique",
+                       COLOR_BTN_1, lambda: app.show_view(CalibrationView), width=280, height=90)
+        b2 = BigButton(btn_stack, "Detection", "Etapes 2-3-4 : trouver et\nlocaliser le point chaud (live)",
+                       COLOR_BTN_2, self._start_detection, width=280, height=90)
+        b3 = BigButton(btn_stack, "Heatmap brute", "Voir la matrice thermique\nsans aucune alteration (live)",
+                       COLOR_BTN_3, lambda: app.show_view(HeatmapView), width=280, height=90)
         for b in (b1, b2, b3):
+            b.pack_propagate(False)
             b.pack(pady=12)
 
     def _start_detection(self):
