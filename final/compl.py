@@ -162,15 +162,46 @@ def order_points(pts):
     return rect
 
 
-def detect_pcb_corners(rgb_img, canny_low=50, canny_high=150, min_area_ratio=0.05):
-    """Retourne les 4 coins detectes automatiquement, ou None si echec (-> fallback manuel)."""
-    gray = cv2.cvtColor(rgb_img, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    edges = cv2.Canny(blurred, canny_low, canny_high)
-    edges = cv2.dilate(edges, np.ones((5, 5), np.uint8), iterations=2)
-    edges = cv2.erode(edges, np.ones((5, 5), np.uint8), iterations=1)
+def extract_pcb_mask(frame, border_size=30, threshold=70):
+    """
+    Isole le PCB du fond en mesurant la distance de couleur (espace LAB) de
+    chaque pixel par rapport a la couleur moyenne des bords de l'image
+    (suppose que le fond de travail occupe les bords, pas le centre).
+    """
+    lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB).astype(np.float32)
+    h, w = lab.shape[:2]
 
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    top = lab[:border_size, :, :]
+    bottom = lab[h - border_size:, :, :]
+    left = lab[:, :border_size, :]
+    right = lab[:, w - border_size:, :]
+
+    border_pixels = np.concatenate([
+        top.reshape(-1, 3), bottom.reshape(-1, 3),
+        left.reshape(-1, 3), right.reshape(-1, 3)
+    ])
+    background = np.mean(border_pixels, axis=0)
+
+    distance = np.linalg.norm(lab - background, axis=2)
+    distance_vis = cv2.normalize(distance, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+    _, mask = cv2.threshold(distance_vis, threshold, 255, cv2.THRESH_BINARY)
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+
+    return mask, distance_vis
+
+
+def detect_pcb_corners(rgb_img, border_size=30, threshold=70, min_area_ratio=0.05):
+    """
+    Retourne les 4 coins detectes automatiquement (methode distance de couleur
+    LAB par rapport au fond), ou None si echec (-> fallback manuel).
+    """
+    mask, _ = extract_pcb_mask(rgb_img, border_size=border_size, threshold=threshold)
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return None
     img_area = rgb_img.shape[0] * rgb_img.shape[1]
@@ -179,14 +210,8 @@ def detect_pcb_corners(rgb_img, canny_low=50, canny_high=150, min_area_ratio=0.0
         return None
 
     largest = max(contours, key=cv2.contourArea)
-    perimeter = cv2.arcLength(largest, True)
-    approx = cv2.approxPolyDP(largest, 0.02 * perimeter, True)
-
-    if len(approx) == 4:
-        corners = approx.reshape(4, 2).astype(np.float32)
-    else:
-        rect = cv2.minAreaRect(largest)
-        corners = cv2.boxPoints(rect).astype(np.float32)
+    rect = cv2.minAreaRect(largest)
+    corners = cv2.boxPoints(rect).astype(np.float32)
 
     return order_points(corners)
 
@@ -417,24 +442,19 @@ class BigButton(tk.Frame):
         self.bg = bg
         self.command = command
         self.title_lbl = tk.Label(self, text=title, font=("Arial", 22, "bold"), bg=bg, fg=COLOR_BTN_TEXT)
-        self.title_lbl.pack(pady=(30, 5))
-        self.subtitle_lbl = tk.Label(self, text=subtitle, font=("Arial", 12), bg=bg, fg=COLOR_BTN_TEXT,
-                                      wraplength=260, justify="center")
-        self.subtitle_lbl.pack(pady=(2, 30))
-        for widget in (self, self.title_lbl, self.subtitle_lbl):
+        self.title_lbl.pack(expand=True)
+        for widget in (self, self.title_lbl):
             widget.bind("<Button-1>", lambda e: self.command())
             widget.bind("<Enter>", self._on_enter)
             widget.bind("<Leave>", self._on_leave)
 
     def _on_enter(self, event):
         self.configure(bg=self._lighten(self.bg))
-        for w in (self.title_lbl, self.subtitle_lbl):
-            w.configure(bg=self._lighten(self.bg))
+        self.title_lbl.configure(bg=self._lighten(self.bg))
 
     def _on_leave(self, event):
         self.configure(bg=self.bg)
-        for w in (self.title_lbl, self.subtitle_lbl):
-            w.configure(bg=self.bg)
+        self.title_lbl.configure(bg=self.bg)
 
     @staticmethod
     def _lighten(hex_color, factor=0.15):
@@ -458,18 +478,20 @@ class MenuView(tk.Frame):
                  bg=COLOR_BG, fg=COLOR_HEADER).pack(fill="x", pady=(20, 0), padx=10, anchor="w")
 
         btn_container = tk.Frame(self, bg=COLOR_BG)
-        btn_container.pack(fill="both", expand=True, padx=40, pady=30)
-        btn_container.grid_columnconfigure((0, 1, 2), weight=1, uniform="col")
-        btn_container.grid_rowconfigure(0, weight=1)
+        btn_container.pack(fill="both", expand=True)
 
-        b1 = BigButton(btn_container, "Calibration", "Etape 1 : cliquer les points\nRGB / Thermique",
-                       COLOR_BTN_1, lambda: app.show_view(CalibrationView))
-        b2 = BigButton(btn_container, "Detection", "Etapes 2-3-4 : trouver et\nlocaliser le point chaud (live)",
-                       COLOR_BTN_2, self._start_detection)
-        b3 = BigButton(btn_container, "Heatmap brute", "Voir la matrice thermique\nsans aucune alteration (live)",
-                       COLOR_BTN_3, lambda: app.show_view(HeatmapView))
-        for i, b in enumerate((b1, b2, b3)):
-            b.grid(row=0, column=i, sticky="nsew", padx=15, pady=15)
+        btn_stack = tk.Frame(btn_container, bg=COLOR_BG)
+        btn_stack.place(relx=0.5, rely=0.5, anchor="center")
+
+        b1 = BigButton(btn_stack, "Calibration", "Etape 1 : cliquer les points\nRGB / Thermique",
+                       COLOR_BTN_1, lambda: app.show_view(CalibrationView), width=280, height=90)
+        b2 = BigButton(btn_stack, "Detection", "Etapes 2-3-4 : trouver et\nlocaliser le point chaud (live)",
+                       COLOR_BTN_2, self._start_detection, width=280, height=90)
+        b3 = BigButton(btn_stack, "Heatmap brute", "Voir la matrice thermique\nsans aucune alteration (live)",
+                       COLOR_BTN_3, lambda: app.show_view(HeatmapView), width=280, height=90)
+        for b in (b1, b2, b3):
+            b.pack_propagate(False)
+            b.pack(pady=12)
 
     def _start_detection(self):
         if self.app.H1 is None:
